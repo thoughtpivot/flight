@@ -23,6 +23,11 @@ export function dedupeStrings(items: string[]): string[] {
     return [...new Set(items)]
 }
 
+/** Combine CLI and FLIGHT_EXCLUDE_PATHS values, CLI first, without duplicates. */
+export function mergeExcludePaths(cliValue: unknown, envValue: unknown): string[] {
+    return dedupeStrings([...normalizeExcludePaths(cliValue), ...normalizeExcludePaths(envValue)])
+}
+
 /**
  * Build fast-glob ignore globs for trees rooted under `appRootAbs`.
  * Entries that resolve outside that root are skipped.
@@ -35,7 +40,7 @@ export function backendDiscoveryIgnorePatterns(appRootAbs: string, excludeRelati
         const resolved = path.resolve(appRootAbs, trimmed)
         const rel = path.relative(appRootAbs, resolved)
         const relPosix = rel.replace(/\\/g, '/')
-        if (!relPosix || relPosix.startsWith('..') || path.isAbsolute(rel)) {
+        if (!relPosix || relPosix === '..' || relPosix.startsWith('../') || path.isAbsolute(rel)) {
             console.warn(`Flight: exclude_paths entry skipped (outside app_home): ${trimmed}`)
             continue
         }

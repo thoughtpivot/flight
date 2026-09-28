@@ -21,7 +21,7 @@ import ratelimit from 'koa-ratelimit'
 import serve from 'koa-static'
 import session from 'koa-session'
 
-import { backendDiscoveryIgnorePatterns, dedupeStrings, normalizeExcludePaths } from './backend-discovery.js'
+import { backendDiscoveryIgnorePatterns, dedupeStrings, mergeExcludePaths } from './backend-discovery.js'
 import {
     applyTrustProxy,
     httpCacheEnabledInSpaPipeline,
@@ -150,10 +150,7 @@ if (argv.disable_vite === undefined) {
 argv.disable_vite = Boolean(argv.disable_vite)
 
 const appHomePath = path.resolve(argv.app_home)
-const excludePathsConfigured = dedupeStrings([
-    ...normalizeExcludePaths(argv.exclude_paths),
-    ...normalizeExcludePaths(process.env.FLIGHT_EXCLUDE_PATHS)
-])
+const excludePathsConfigured = mergeExcludePaths(argv.exclude_paths, process.env.FLIGHT_EXCLUDE_PATHS)
 const backendDiscoveryIgnores = backendDiscoveryIgnorePatterns(appHomePath, excludePathsConfigured)
 
 process.chdir(appHomePath)
