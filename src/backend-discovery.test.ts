@@ -45,19 +45,22 @@ test('backendDiscoveryIgnorePatterns skips paths outside app_home', () => {
     const root = path.join(os.tmpdir(), 'flight-app')
     const outside = '../outside'
     const abs = path.resolve(root, '..', 'abs')
+    const parent = '..'
     const warnings: string[] = []
     const original = console.warn
     console.warn = (message?: unknown) => {
         warnings.push(String(message))
     }
     try {
-        const patterns = backendDiscoveryIgnorePatterns(root, [outside, abs])
+        const patterns = backendDiscoveryIgnorePatterns(root, [outside, abs, parent])
         assert.deepEqual(patterns, [])
-        assert.equal(warnings.length, 2)
+        assert.equal(warnings.length, 3)
         assert.match(warnings[0], /outside app_home/)
         assert.ok(warnings[0].includes(outside))
         assert.match(warnings[1], /outside app_home/)
         assert.ok(warnings[1].includes(abs))
+        assert.match(warnings[2], /outside app_home/)
+        assert.ok(warnings[2].endsWith(': ..'))
     } finally {
         console.warn = original
     }

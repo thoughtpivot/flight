@@ -30,7 +30,8 @@ export function mergeExcludePaths(cliValue: unknown, envValue: unknown): string[
 
 /**
  * Build fast-glob ignore globs for trees rooted under `appRootAbs`.
- * Entries that resolve outside that root are skipped.
+ * Entries that resolve outside that root, or to the root itself, are skipped.
+ * Folder names are not escaped, so a name like `[abc]` is still a fast-glob pattern.
  */
 export function backendDiscoveryIgnorePatterns(appRootAbs: string, excludeRelativeDirs: string[]): string[] {
     const patterns: string[] = []
@@ -40,7 +41,11 @@ export function backendDiscoveryIgnorePatterns(appRootAbs: string, excludeRelati
         const resolved = path.resolve(appRootAbs, trimmed)
         const rel = path.relative(appRootAbs, resolved)
         const relPosix = rel.replace(/\\/g, '/')
-        if (!relPosix || relPosix === '..' || relPosix.startsWith('../') || path.isAbsolute(rel)) {
+        if (!relPosix) {
+            console.warn(`Flight: exclude_paths entry skipped (would ignore all of app_home): ${trimmed}`)
+            continue
+        }
+        if (relPosix === '..' || relPosix.startsWith('../') || path.isAbsolute(rel)) {
             console.warn(`Flight: exclude_paths entry skipped (outside app_home): ${trimmed}`)
             continue
         }
