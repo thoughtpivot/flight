@@ -61,34 +61,54 @@ test('productionSpaPipelineActive: not in development', () => {
     assert.equal(productionSpaPipelineActive('development', true, {}), false)
 })
 
-test('parseCommaPrefixes: defaults and trimming', () => {
+test('parseCommaPrefixes uses the second argument only when the value is missing', () => {
     assert.deepEqual(parseCommaPrefixes(undefined, '/a,/b'), ['/a', '/b'])
-    assert.deepEqual(parseCommaPrefixes('x, y', '/z'), ['/x', '/y'])
     assert.deepEqual(parseCommaPrefixes('', '/z'), [])
     assert.deepEqual(parseCommaPrefixes(' , , ', '/z'), [])
+    assert.deepEqual(parseCommaPrefixes('a, b', '/z'), ['/a', '/b'])
     assert.deepEqual(parseCommaPrefixes('/already', ''), ['/already'])
 })
 
 test('resolveDistRoot and spaIndexRelative', () => {
     assert.equal(resolveDistRoot('/app', {}), path.resolve('/app', '../dist'))
+    assert.equal(resolveDistRoot('/app', { FLIGHT_DIST_PATH: '' }), path.resolve('/app', '../dist'))
+    assert.equal(resolveDistRoot('/app', { FLIGHT_DIST_PATH: '   ' }), path.resolve('/app', '../dist'))
     assert.equal(resolveDistRoot('/app', { FLIGHT_DIST_PATH: 'build' }), path.resolve('/app', 'build'))
+    assert.equal(resolveDistRoot('/app', { FLIGHT_DIST_PATH: '/var/www/dist' }), path.resolve('/app', '/var/www/dist'))
     assert.equal(spaIndexRelative({}), 'index.html')
+    assert.equal(spaIndexRelative({ FLIGHT_SPA_INDEX: '' }), 'index.html')
+    assert.equal(spaIndexRelative({ FLIGHT_SPA_INDEX: '   ' }), 'index.html')
     assert.equal(spaIndexRelative({ FLIGHT_SPA_INDEX: ' ///shell.html ' }), 'shell.html')
+    assert.equal(spaIndexRelative({ FLIGHT_SPA_INDEX: '../secret.html' }), 'index.html')
+    assert.equal(spaIndexRelative({ FLIGHT_SPA_INDEX: 'a/../../x' }), 'index.html')
 })
 
-test('applyTrustProxy and http cache flags are case-sensitive', () => {
-    const app = { proxy: false }
-    applyTrustProxy(app, {})
-    assert.equal(app.proxy, false)
-    applyTrustProxy(app, { FLIGHT_TRUST_PROXY: 'yes' })
-    assert.equal(app.proxy, true)
-    applyTrustProxy(app, { FLIGHT_TRUST_PROXY: 'TRUE' })
-    assert.equal(app.proxy, false)
+test('applyTrustProxy sets the flag from a fresh app each time', () => {
+    const cases: Array<{ env: NodeJS.ProcessEnv; start: boolean; expected: boolean }> = [
+        { env: {}, start: true, expected: false },
+        { env: { FLIGHT_TRUST_PROXY: '1' }, start: false, expected: true },
+        { env: { FLIGHT_TRUST_PROXY: 'true' }, start: false, expected: true },
+        { env: { FLIGHT_TRUST_PROXY: 'yes' }, start: false, expected: true },
+        { env: { FLIGHT_TRUST_PROXY: 'TRUE' }, start: true, expected: false },
+        { env: { FLIGHT_TRUST_PROXY: '0' }, start: true, expected: false },
+        { env: { FLIGHT_TRUST_PROXY: 'false' }, start: true, expected: false },
+        { env: { FLIGHT_TRUST_PROXY: '' }, start: true, expected: false }
+    ]
+    for (const { env, start, expected } of cases) {
+        const app = { proxy: start }
+        applyTrustProxy(app, env)
+        assert.equal(app.proxy, expected)
+    }
+})
+
+test('http cache flag accepts only 1, true, and yes', () => {
     assert.equal(httpCacheEnabledInSpaPipeline({}), false)
     assert.equal(httpCacheEnabledInSpaPipeline({ FLIGHT_HTTP_CACHE: '1' }), true)
     assert.equal(httpCacheEnabledInSpaPipeline({ FLIGHT_HTTP_CACHE: 'true' }), true)
     assert.equal(httpCacheEnabledInSpaPipeline({ FLIGHT_HTTP_CACHE: 'yes' }), true)
     assert.equal(httpCacheEnabledInSpaPipeline({ FLIGHT_HTTP_CACHE: 'TRUE' }), false)
+    assert.equal(httpCacheEnabledInSpaPipeline({ FLIGHT_HTTP_CACHE: '0' }), false)
+    assert.equal(httpCacheEnabledInSpaPipeline({ FLIGHT_HTTP_CACHE: 'false' }), false)
 })
 
 test('shouldSkipRateLimitForPath', () => {
@@ -214,4 +234,20 @@ test('missing index.html does not throw', async () => {
     const app = buildSpaStack(dist)
     const res = await request(app.callback()).get('/dashboard').set('Accept', 'text/html')
     assert.equal(res.status, 404)
+})
+
+test('SPA index path that leaves dist is not served', async () => {
+    const dist = makeTempDist()
+    const outside = path.join(dist, '..', `flight-secret-${path.basename(dist)}.html`)
+    fs.writeFileSync(outside, 'secret-outside', 'utf8')
+    const app = new Koa()
+    app.use(serve(dist))
+    app.use(spaIndexHtmlFallback(dist, '../' + path.basename(outside), []))
+    try {
+        const res = await request(app.callback()).get('/dashboard').set('Accept', 'text/html')
+        assert.equal(res.status, 404)
+        assert.ok(!String(res.text).includes('secret-outside'))
+    } finally {
+        fs.unlinkSync(outside)
+    }
 })
