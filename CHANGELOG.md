@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Bun runtime** (`src/bun`, `flight-bun` / `bun src/bun/server.ts`). This is the Flight edge server from Vaso Lubomirov's Bun research: `Bun.serve`, zero runtime dependencies on the native path, `/healthz`, and the same middleware jobs (logging, security headers, CORS, gzip, rate limit, sessions, response cache) implemented with Bun and Web `Request` / `Response`.
+- **Koa compatibility on that runtime.** A `*.backend.ts` file may still `export default router.routes()`. Those backends are mounted through Koa and `koa-bodyparser`, so an existing Flight app can boot on Bun before each route is rewritten to a path → handler fragment. Compiled `*.backend.js` files are discovered too.
+- **`FLIGHT_TRUST_PROXY` on the Bun rate limiter.** `X-Forwarded-For` is ignored unless the proxy is trusted.
+
+### Notes
+
+- The Node / Koa `flight` binary is unchanged. Sessions on Bun stay off until `FLIGHT_SESSION_SECRET` is set (no default secret). Rate limiting stays off until `FLIGHT_RATE_LIMIT_MAX` is greater than zero.
+- Cluster benchmarks and container deploy manifests from the research harness are not republished here.
+
 ## 2.1.0
 
 ### Added

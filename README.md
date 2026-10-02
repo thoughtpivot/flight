@@ -352,10 +352,51 @@ flowchart TD
 
 See **[CHANGELOG.md](CHANGELOG.md)** for the full **2.0.0** notes.
 
+## Bun runtime
+
+Flight can also run on [Bun](https://bun.sh). The Node binary (`npx flight`) is unchanged. The Bun entry is opt-in:
+
+```bash
+bun src/bun/server.ts
+# or, after install: flight-bun
+```
+
+`npm run test:bun` runs the Bun suite. `npm test` stays the Node suite.
+
+This runtime is the edge server from the Bun research behind [THO-115](https://linear.app/thoughtpivot/issue/THO-115/embody-vasos-flight-research-bun-rcs-benchmarks-migration-advice): `Bun.serve`, native TypeScript loading, `/healthz`, and middleware (logging, security headers, CORS, gzip, rate limit, sessions, response cache) with no Koa packages on the native path. Redis is optional (`FLIGHT_REDIS_URL`); without it, sessions and cache use memory.
+
+**Two backend contracts can be mixed in one app.**
+
+Bun-native files default-export a path map. Handlers are `(req: Request) => Response`. Path params use Bun's `:id` routes.
+
+```typescript
+export default {
+    '/api/hello': {
+        GET: () => Response.json({ message: 'Hello from Flight!' })
+    }
+}
+```
+
+Existing Koa files keep working. `export default router.routes()` is mounted through Koa, including JSON body parsing. That is the on-ramp: boot the app on Bun, then rewrite routes file by file. `*.backend.js` is discovered as well as `*.backend.ts`.
+
+In development (`FLIGHT_MODE=development`) the API stays on `FLIGHT_PORT` (default 3000) and Vite is spawned on 3001. In production the built SPA is read from `FLIGHT_DIST_PATH` (default `<app home>/dist`) with an `index.html` fallback. `/api`, `/health`, and `/healthz` do not fall back.
+
+| Variable                 | Default          | Bun runtime                                                                                      |
+| ------------------------ | ---------------- | ------------------------------------------------------------------------------------------------ |
+| `FLIGHT_SESSION_SECRET`  | unset            | Sessions stay **off** until this is set. There is no baked-in secret.                            |
+| `FLIGHT_RATE_LIMIT_MAX`  | `0`              | Rate limit stays **off** until this is greater than zero.                                        |
+| `FLIGHT_TRUST_PROXY`     | false            | When `1` / `true` / `yes`, the limiter uses `X-Forwarded-For`. Otherwise that header is ignored. |
+| `FLIGHT_REDIS_URL`       | unset            | `redis://host:6379` for shared sessions and cache.                                               |
+| `FLIGHT_CACHE_ENABLED`   | false            | Cache GET responses that send `Cache-Control: max-age`.                                          |
+| `FLIGHT_STATIC_PREFIXES` | `/assets,/fonts` | GET/HEAD under these prefixes skip the rate limit.                                               |
+
+Other `FLIGHT_*` knobs from the Node server (`FLIGHT_MODE`, `FLIGHT_PORT`, `FLIGHT_APP_HOME`, `FLIGHT_EXCLUDE_PATHS`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_PAYLOAD_LIMIT`) apply here too. `GET /healthz` returns `ok` and is not rate limited.
+
 ## Requirements
 
-- Node.js **16.x** or higher
-- **Redis** (sessions / rate limit / cache integrations)
+- Node.js **16.x** or higher (the `flight` binary)
+- [Bun](https://bun.sh) 1.x (only for `flight-bun` / `npm run test:bun`)
+- **Redis** (sessions / rate limit / cache integrations on the Node server; optional for the Bun runtime)
 - **TypeScript** in your app if you author `.backend.ts` modules as TS
 
 ## License
