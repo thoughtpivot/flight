@@ -42,7 +42,7 @@
         "dotenv": "^17.4.2",
         "esbuild": "^0.28.0",
         "fast-glob": "^3.3.3",
-        "ioredis": "^5.4.2",
+        "ioredis": "^6.0.0",
         "koa": "^2.15.3",
         "koa-bodyparser": "^4.4.1",
         "koa-cash": "^5.0.0",
