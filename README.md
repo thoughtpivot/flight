@@ -4,17 +4,18 @@
 
 # Flight
 
-**Flight** is a Node.js application server for teams who want something **fast**, **boring in the good way**, and **ready for serious traffic**. You bring your own hosting—there is no lock-in to a proprietary edge or a single vendor’s deployment story. It fits **twelve-factor** style workflows: configuration via environment variables, horizontal scaling, and state kept where it belongs (for Flight, that includes **Redis** for sessions and cache-friendly layers).
+**Flight** is an application server for teams who want something **fast**, **boring in the good way**, and **ready for serious traffic**. You bring your own hosting—there is no lock-in to a proprietary edge or a single vendor’s deployment story. It fits **twelve-factor** style workflows: configuration via environment variables, horizontal scaling, and state kept where it belongs (for Flight, that includes **Redis** for sessions and cache-friendly layers).
 
-Think **platform-agnostic**: not framework-as-a-platform, but a clear runtime you can run wherever Node runs—VMs, Kubernetes, bare metal, your cloud of choice. Flight is aimed at **hyperscale-friendly** designs (cluster workers out of the box), **ephemeral** processes, and **component-shaped** backends so routes stay colocated with the features they serve. **Vue** and **React** are both supported through the same **Vite** dev and production flows (your app’s **`vite.config`** chooses the UI stack; Flight does not).
+Think **platform-agnostic**: not framework-as-a-platform, but a clear runtime you can run wherever **Node** or **Bun** runs—VMs, Kubernetes, bare metal, your cloud of choice. The `flight` binary is the Node / Koa server. `flight-bun` is the Bun server (`Bun.serve`), and it can still mount existing Koa `router.routes()` backends while you move routes over. Flight is aimed at **hyperscale-friendly** designs (cluster workers on Node, a single Bun process with native TypeScript on the Bun path), **ephemeral** processes, and **component-shaped** backends so routes stay colocated with the features they serve. **Vue** and **React** are both supported through the same **Vite** dev and production flows (your app’s **`vite.config`** chooses the UI stack; Flight does not).
 
 Flight is **open source** from **[ThoughtPivot](https://github.com/thoughtpivot)**.
 
 ## Highlights
 
-- **Performance-focused**: Cluster mode, compression, Redis-backed caching hooks, rate limiting in production
+- **Two runtimes**: **Node / Koa** (`flight`) and **Bun** (`flight-bun`). The Bun server loads TypeScript directly, exposes `GET /healthz`, and still accepts existing Koa backends
+- **Performance-focused**: Cluster mode on Node, compression, Redis-backed caching hooks, rate limiting in production
 - **Developer velocity**: **Vite** dev server with HMR on port **3001** for **Vue** or **React** (per your project’s Vite config)
-- **Composable backends**: Discover `**/*.backend.ts` under your app root and mount Koa routes per component
+- **Composable backends**: Discover `**/*.backend.ts` (and `**/*.backend.js` on Bun) under your app root and mount them per component
 - **Production SPA**: Built-in **`dist` + `index.html`** fallback (option B) when running **`production`** with **`disable_vite`**, with an explicit opt-out for API-only processes
 - **Configurable discovery**: `--exclude_paths` / `FLIGHT_EXCLUDE_PATHS` to skip directories when scanning backends
 - **TypeScript-native**: Written for TS projects; sensible defaults, minimal ceremony
@@ -119,9 +120,21 @@ npm exec --yes --package=@thoughtpivot/flight -- flight --mode development
 
 **Global install** (optional): `npm install -g @thoughtpivot/flight`, then run **`flight`** from your PATH the same way as **`npx flight`**.
 
+**Bun** (same app directory, [Bun](https://bun.sh) 1.x on your PATH):
+
+```bash
+# development: API on :3000, Vite on :3001
+FLIGHT_MODE=development flight-bun
+
+# production: serve dist/ plus backends
+FLIGHT_MODE=production flight-bun
+```
+
+From a clone of this repo, before the package is published, that is `bun src/bun/server.ts`. Existing `export default router.routes()` files keep working. New files can export a Web `Request` / `Response` route map. Details, env vars, and the backend contract are in [Bun runtime](#bun-runtime).
+
 ## Development vs production
 
-Flight picks **`mode`** as: **`FLIGHT_MODE`** (if set and non-empty), else **`--mode`** from argv, else **`production`**. Everything below assumes Redis is reachable unless you only use routes that avoid session/ratelimit/cache.
+The Node server picks **`mode`** as: **`FLIGHT_MODE`** (if set and non-empty), else **`--mode`** from argv, else **`production`**. The table below is that Node / Koa process. It assumes Redis is reachable unless you only use routes that avoid session, rate limit, and cache. The Bun server is documented in [Bun runtime](#bun-runtime).
 
 | Topic            | Development                                                                                              | Production                                                                                                                                  |
 | ---------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -354,16 +367,21 @@ See **[CHANGELOG.md](CHANGELOG.md)** for the full **2.0.0** notes.
 
 ## Bun runtime
 
-Flight can also run on [Bun](https://bun.sh). The Node binary (`npx flight`) is unchanged. The Bun entry is opt-in:
+`flight-bun` is the Bun entry. `npx flight` remains the Node server. From an installed package:
 
 ```bash
-bun src/bun/server.ts
-# or, after install: flight-bun
+FLIGHT_MODE=development flight-bun
+```
+
+From a clone of this repo:
+
+```bash
+FLIGHT_MODE=development bun src/bun/server.ts
 ```
 
 `npm run test:bun` runs the Bun suite. `npm test` stays the Node suite.
 
-This runtime is the edge server from the Bun research behind [THO-115](https://linear.app/thoughtpivot/issue/THO-115/embody-vasos-flight-research-bun-rcs-benchmarks-migration-advice): `Bun.serve`, native TypeScript loading, `/healthz`, and middleware (logging, security headers, CORS, gzip, rate limit, sessions, response cache) with no Koa packages on the native path. Redis is optional (`FLIGHT_REDIS_URL`); without it, sessions and cache use memory.
+The Bun server uses `Bun.serve` and loads TypeScript directly. It exposes `GET /healthz` and the same edge jobs as the Node server (logging, security headers, CORS, gzip, rate limit, sessions, response cache) without Koa packages on the native path. Redis is optional (`FLIGHT_REDIS_URL`); without it, sessions and cache use memory.
 
 **Two backend contracts can be mixed in one app.**
 
