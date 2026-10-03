@@ -4,17 +4,18 @@
 
 # Flight
 
-**Flight** is a Node.js application server for teams who want something **fast**, **boring in the good way**, and **ready for serious traffic**. You bring your own hosting—there is no lock-in to a proprietary edge or a single vendor’s deployment story. It fits **twelve-factor** style workflows: configuration via environment variables, horizontal scaling, and state kept where it belongs (for Flight, that includes **Redis** for sessions and cache-friendly layers).
+**Flight** is an application server for teams who want something **fast**, **boring in the good way**, and **ready for serious traffic**. You bring your own hosting—there is no lock-in to a proprietary edge or a single vendor’s deployment story. It fits **twelve-factor** style workflows: configuration via environment variables, horizontal scaling, and state kept where it belongs (for Flight, that includes **Redis** for sessions and cache-friendly layers).
 
-Think **platform-agnostic**: not framework-as-a-platform, but a clear runtime you can run wherever Node runs—VMs, Kubernetes, bare metal, your cloud of choice. Flight is aimed at **hyperscale-friendly** designs (cluster workers out of the box), **ephemeral** processes, and **component-shaped** backends so routes stay colocated with the features they serve. **Vue** and **React** are both supported through the same **Vite** dev and production flows (your app’s **`vite.config`** chooses the UI stack; Flight does not).
+Think **platform-agnostic**: not framework-as-a-platform, but a clear runtime you can run wherever **Node** or **Bun** runs—VMs, Kubernetes, bare metal, your cloud of choice. The `flight` binary is the Node / Koa server. `flight-bun` is the Bun server (`Bun.serve`), and it can still mount existing Koa `router.routes()` backends while you move routes over. Flight is aimed at **hyperscale-friendly** designs (cluster workers on Node, a single Bun process with native TypeScript on the Bun path), **ephemeral** processes, and **component-shaped** backends so routes stay colocated with the features they serve. **Vue** and **React** are both supported through the same **Vite** dev and production flows (your app’s **`vite.config`** chooses the UI stack; Flight does not).
 
 Flight is **open source** from **[ThoughtPivot](https://github.com/thoughtpivot)**.
 
 ## Highlights
 
-- **Performance-focused**: Cluster mode, compression, Redis-backed caching hooks, rate limiting in production
+- **Two runtimes**: **Node / Koa** (`flight`) and **Bun** (`flight-bun`). The Bun server loads TypeScript directly, exposes `GET /healthz`, and still accepts existing Koa backends
+- **Performance-focused**: Cluster mode on Node, compression, Redis-backed caching hooks, rate limiting in production
 - **Developer velocity**: **Vite** dev server with HMR on port **3001** for **Vue** or **React** (per your project’s Vite config)
-- **Composable backends**: Discover `**/*.backend.ts` under your app root and mount Koa routes per component
+- **Composable backends**: Discover `**/*.backend.ts` (and `**/*.backend.js` on Bun) under your app root and mount them per component
 - **Production SPA**: Built-in **`dist` + `index.html`** fallback (option B) when running **`production`** with **`disable_vite`**, with an explicit opt-out for API-only processes
 - **Configurable discovery**: `--exclude_paths` / `FLIGHT_EXCLUDE_PATHS` to skip directories when scanning backends
 - **TypeScript-native**: Written for TS projects; sensible defaults, minimal ceremony
@@ -119,9 +120,21 @@ npm exec --yes --package=@thoughtpivot/flight -- flight --mode development
 
 **Global install** (optional): `npm install -g @thoughtpivot/flight`, then run **`flight`** from your PATH the same way as **`npx flight`**.
 
+**Bun** (same app directory, [Bun](https://bun.sh) 1.x on your PATH):
+
+```bash
+# development: API on :3000, Vite on :3001
+FLIGHT_MODE=development flight-bun
+
+# production: serve dist/ plus backends
+FLIGHT_MODE=production flight-bun
+```
+
+From a clone of this repo, before the package is published, that is `bun src/bun/server.ts`. Existing `export default router.routes()` files keep working. New files can export a Web `Request` / `Response` route map. Details, env vars, and the backend contract are in [Bun runtime](#bun-runtime).
+
 ## Development vs production
 
-Flight picks **`mode`** as: **`FLIGHT_MODE`** (if set and non-empty), else **`--mode`** from argv, else **`production`**. Everything below assumes Redis is reachable unless you only use routes that avoid session/ratelimit/cache.
+The Node server picks **`mode`** as: **`FLIGHT_MODE`** (if set and non-empty), else **`--mode`** from argv, else **`production`**. The table below is that Node / Koa process. It assumes Redis is reachable unless you only use routes that avoid session, rate limit, and cache. The Bun server is documented in [Bun runtime](#bun-runtime).
 
 | Topic            | Development                                                                                              | Production                                                                                                                                  |
 | ---------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -352,10 +365,56 @@ flowchart TD
 
 See **[CHANGELOG.md](CHANGELOG.md)** for the full **2.0.0** notes.
 
+## Bun runtime
+
+`flight-bun` is the Bun entry. `npx flight` remains the Node server. From an installed package:
+
+```bash
+FLIGHT_MODE=development flight-bun
+```
+
+From a clone of this repo:
+
+```bash
+FLIGHT_MODE=development bun src/bun/server.ts
+```
+
+`npm run test:bun` runs the Bun suite. `npm test` stays the Node suite.
+
+The Bun server uses `Bun.serve` and loads TypeScript directly. It exposes `GET /healthz` and the same edge jobs as the Node server (logging, security headers, CORS, gzip, rate limit, sessions, response cache) without Koa packages on the native path. Redis is optional (`FLIGHT_REDIS_URL`); without it, sessions and cache use memory.
+
+**Two backend contracts can be mixed in one app.**
+
+Bun-native files default-export a path map. Handlers are `(req: Request) => Response`. Path params use Bun's `:id` routes.
+
+```typescript
+export default {
+    '/api/hello': {
+        GET: () => Response.json({ message: 'Hello from Flight!' })
+    }
+}
+```
+
+Existing Koa files keep working. `export default router.routes()` is mounted through Koa, including JSON body parsing. That is the on-ramp: boot the app on Bun, then rewrite routes file by file. `*.backend.js` is discovered as well as `*.backend.ts`.
+
+In development (`FLIGHT_MODE=development`) the API stays on `FLIGHT_PORT` (default 3000) and Vite is spawned on 3001. In production the built SPA is read from `FLIGHT_DIST_PATH` (default `<app home>/dist`) with an `index.html` fallback. `/api`, `/health`, and `/healthz` do not fall back.
+
+| Variable                 | Default          | Bun runtime                                                                                      |
+| ------------------------ | ---------------- | ------------------------------------------------------------------------------------------------ |
+| `FLIGHT_SESSION_SECRET`  | unset            | Sessions stay **off** until this is set. There is no baked-in secret.                            |
+| `FLIGHT_RATE_LIMIT_MAX`  | `0`              | Rate limit stays **off** until this is greater than zero.                                        |
+| `FLIGHT_TRUST_PROXY`     | false            | When `1` / `true` / `yes`, the limiter uses `X-Forwarded-For`. Otherwise that header is ignored. |
+| `FLIGHT_REDIS_URL`       | unset            | `redis://host:6379` for shared sessions and cache.                                               |
+| `FLIGHT_CACHE_ENABLED`   | false            | Cache GET responses that send `Cache-Control: max-age`.                                          |
+| `FLIGHT_STATIC_PREFIXES` | `/assets,/fonts` | GET/HEAD under these prefixes skip the rate limit.                                               |
+
+Other `FLIGHT_*` knobs from the Node server (`FLIGHT_MODE`, `FLIGHT_PORT`, `FLIGHT_APP_HOME`, `FLIGHT_EXCLUDE_PATHS`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_PAYLOAD_LIMIT`) apply here too. `GET /healthz` returns `ok` and is not rate limited.
+
 ## Requirements
 
-- Node.js **16.x** or higher
-- **Redis** (sessions / rate limit / cache integrations)
+- Node.js **16.x** or higher (the `flight` binary)
+- [Bun](https://bun.sh) 1.x (only for `flight-bun` / `npm run test:bun`)
+- **Redis** (sessions / rate limit / cache integrations on the Node server; optional for the Bun runtime)
 - **TypeScript** in your app if you author `.backend.ts` modules as TS
 
 ## License
