@@ -1,0 +1,19 @@
+# CI and npm publish moved to GitHub Actions:
+#   .github/workflows/ci.yml
+#   .github/workflows/publish.yml
+#
+# This noop job keeps an old CircleCI project from failing status checks.
+# Disconnect the CircleCI project when convenient, then delete this file.
+version: 2.1
+jobs:
+    retired:
+        docker:
+            - image: cimg/base:current
+        steps:
+            - run:
+                  name: CircleCI retired
+                  command: echo "CI/publish live in GitHub Actions. Disconnect this CircleCI project."
+workflows:
+    retired:
+        jobs:
+            - retired
