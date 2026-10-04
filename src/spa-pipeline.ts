@@ -23,6 +23,7 @@ export function applyTrustProxy(app: { proxy: boolean }, env: NodeJS.ProcessEnv 
     app.proxy = t === '1' || t === 'true' || t === 'yes'
 }
 
+/** Use `fallback` only when `value` is missing. Add a leading `/` to entries that lack one. */
 export function parseCommaPrefixes(value: string | undefined, fallback: string): string[] {
     const raw = (value ?? fallback).trim()
     if (!raw) return []
@@ -34,12 +35,17 @@ export function parseCommaPrefixes(value: string | undefined, fallback: string):
 }
 
 export function resolveDistRoot(cwd: string, env: NodeJS.ProcessEnv = process.env): string {
-    return path.resolve(cwd, env.FLIGHT_DIST_PATH || '../dist')
+    const configured = env.FLIGHT_DIST_PATH?.trim()
+    return path.resolve(cwd, configured || '../dist')
 }
 
+/** SPA shell path inside the dist root. `..` segments and blank values fall back to `index.html`. */
 export function spaIndexRelative(env: NodeJS.ProcessEnv = process.env): string {
-    const v = (env.FLIGHT_SPA_INDEX || 'index.html').trim()
-    return v.replace(/^\/+/, '')
+    const configured = env.FLIGHT_SPA_INDEX?.trim().replace(/^\/+/, '')
+    if (!configured) return 'index.html'
+    const normalized = configured.replace(/\\/g, '/')
+    if (normalized.split('/').includes('..')) return 'index.html'
+    return normalized
 }
 
 const DEFAULT_DENY_PREFIXES = ['/api', '/health']
@@ -53,8 +59,16 @@ function lastPathSegmentLooksLikeFile(urlPath: string): boolean {
 /**
  * After koa-static: serve index.html for document navigations that are not API, health, or static-like paths.
  */
+function indexInsideDist(distRoot: string, indexRel: string): string | undefined {
+    const indexAbs = path.resolve(distRoot, indexRel)
+    const rel = path.relative(distRoot, indexAbs)
+    const relPosix = rel.replace(/\\/g, '/')
+    if (!relPosix || relPosix === '..' || relPosix.startsWith('../') || path.isAbsolute(rel)) return undefined
+    return indexAbs
+}
+
 export function spaIndexHtmlFallback(distRoot: string, indexRel: string, extraDenyPrefixes: string[] = []): Middleware {
-    const indexAbs = path.join(distRoot, indexRel)
+    const indexAbs = indexInsideDist(distRoot, indexRel)
     const deny = dedupePathList([...DEFAULT_DENY_PREFIXES, ...extraDenyPrefixes])
 
     return async (ctx: Context, next: Next) => {
@@ -72,6 +86,8 @@ export function spaIndexHtmlFallback(distRoot: string, indexRel: string, extraDe
                 return next()
             }
         }
+
+        if (!indexAbs) return next()
 
         try {
             await fs.promises.access(indexAbs, fs.constants.R_OK)
