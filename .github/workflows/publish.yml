@@ -51,11 +51,17 @@ jobs:
                     exit 1
                   fi
 
+            # Auth: prefer npm Trusted Publisher (OIDC via id-token). Optional
+            # NPM_TOKEN is only for a granular fallback secret on the `npm`
+            # environment — leave it unset so an empty value does not block OIDC.
             - name: Publish
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
               run: |
                   set -euo pipefail
+                  if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+                    unset NODE_AUTH_TOKEN
+                  fi
                   if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
                     npm publish --dry-run --access public --provenance
                   else
