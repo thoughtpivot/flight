@@ -8,6 +8,10 @@
 - **Koa compatibility on that runtime.** A `*.backend.ts` file may still `export default router.routes()`. Those backends are mounted through Koa and `koa-bodyparser`, so an existing Flight app can boot on Bun before each route is rewritten to a path → handler fragment. Compiled `*.backend.js` files are discovered too.
 - **`FLIGHT_TRUST_PROXY` on the Bun rate limiter.** `X-Forwarded-For` is ignored unless the proxy is trusted.
 
+### Changed
+
+- **Vite 8** toolchain: `vite` `^8.3.2`, `@vitejs/plugin-react` `^6.1.1`, `@vitejs/plugin-vue` `^6.0.9`, and `vite-plugin-vuetify` `^2.1.3`. `@vitejs/plugin-react` 6 requires Vite 8 (`vite/internal`), so the React plugin bump cannot land alone. Apps that still pin Vite 6 should stay on Flight 2.1.x until they upgrade.
+
 ### Notes
 
 - The Node / Koa `flight` binary is unchanged. Sessions on Bun stay off until `FLIGHT_SESSION_SECRET` is set (no default secret). Rate limiting stays off until `FLIGHT_RATE_LIMIT_MAX` is greater than zero.

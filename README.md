@@ -252,12 +252,14 @@ export default router.routes()
 
 ## React + Vite (same Flight commands)
 
-Flight does **not** choose Vue vs React—it runs **`vite`** / **`vite build`** from your **`app_home`**; your **`vite.config.*`** and app **`package.json`** select the framework. The `@thoughtpivot/flight` package includes **`@vitejs/plugin-react`** alongside **`@vitejs/plugin-vue`** so React+Vite apps get the same style of transitive plugin coverage as Vue apps. You still install the UI runtime in **your** app:
+Flight does **not** choose Vue vs React—it runs **`vite`** / **`vite build`** from your **`app_home`**; your **`vite.config.*`** and app **`package.json`** select the framework. The `@thoughtpivot/flight` package includes **`@vitejs/plugin-react`** alongside **`@vitejs/plugin-vue`** so React+Vite apps get the same style of transitive plugin coverage as Vue apps. You still install the UI runtime in **your** app. Flight ships **Vite 8** and matching plugins; apps that stay on Vite 6 should pin an older Flight release until they upgrade.
 
 ```bash
 npm install react react-dom
 npm install -D @types/react @types/react-dom
 ```
+
+Set **`"type": "module"`** in the app **`package.json`** (or use a `.mts` / `.mjs` Vite config) so Vite 8 loads ESM config without falling back to the deprecated CommonJS path.
 
 `vite.config.ts` (project root):
 
