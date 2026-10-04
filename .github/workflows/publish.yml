@@ -51,18 +51,16 @@ jobs:
                     exit 1
                   fi
 
-            # Auth: Trusted Publisher only (OIDC via id-token). Do not set
-            # NODE_AUTH_TOKEN — a classic/granular NPM_TOKEN overrides OIDC and
-            # may only allow staged publishes (E_STAGE_REQUIRED).
-            #
-            # On npm → package → Trusted Publisher → Allowed actions, enable
-            # "Allow npm publish" (configs after 2026-09-03 default to stage-only).
+            # Auth: NPM_TOKEN on the GitHub `npm` environment (granular publish
+            # token). id-token remains for provenance attestations.
             - name: Publish
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
               run: |
                   set -euo pipefail
-                  unset NODE_AUTH_TOKEN || true
-                  if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "${NPM_CONFIG_USERCONFIG}" ]; then
-                    sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG}" || true
+                  if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+                    echo "NPM_TOKEN is not set on the GitHub Actions 'npm' environment."
+                    exit 1
                   fi
                   if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
                     npm publish --dry-run --access public --provenance
