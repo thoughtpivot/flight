@@ -14,7 +14,7 @@
 - **Koa compatibility on that runtime.** A `*.backend.ts` file may still `export default router.routes()`. Those backends are mounted through Koa and `koa-bodyparser`. Compiled `*.backend.js` files are discovered too.
 - **`FLIGHT_TRUST_PROXY` on the Bun rate limiter.** `X-Forwarded-For` is ignored unless the proxy is trusted.
 - **`@vitejs/plugin-react`** as a dependency (alongside `@vitejs/plugin-vue`) so React + Vite apps get the same style of transitive plugin coverage as Vue apps.
-- Broader Node test coverage for SPA fallback, env flags, rate-limit skips, and backend exclude paths. `npm test` runs every compiled `dist/**/*.test.js` file.
+- Broader Node test coverage for SPA fallback, env flags, rate-limit skips, and backend exclude paths. `npm test` runs every compiled `dist/*.test.js` file.
 - GitHub Actions **CI** (`.github/workflows/ci.yml`) and **npm publish** (`.github/workflows/publish.yml`) with provenance. CircleCI is retired.
 
 ### Changed
