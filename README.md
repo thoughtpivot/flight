@@ -184,6 +184,8 @@ Flight loads a **`.env`** file from the **current working directory** at startup
 | _(n/a)_                              | `FLIGHT_REDIS_PORT`                  | `6379`           | Redis port.                                                                                                                                                                                                     |
 | _(n/a)_                              | `FLIGHT_MAX_WORKERS`                 | CPU count        | Cap cluster worker count on small nodes.                                                                                                                                                                        |
 
+`1`, `true`, and `yes` are matched exactly. `TRUE` does not turn those settings on.
+
 Example `.env` fragment:
 
 ```bash
