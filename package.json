@@ -53,7 +53,7 @@
         "koa-cash": "^5.0.0",
         "koa-compress": "^5.1.1",
         "koa-connect-history-api-fallback": "^0.3.1",
-        "koa-helmet": "^8.0.1",
+        "koa-helmet": "^9.0.0",
         "koa-logger": "^4.0.0",
         "koa-ratelimit": "^6.0.0",
         "koa-redis": "^4.0.1",
