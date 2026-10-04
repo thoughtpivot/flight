@@ -17,7 +17,7 @@
         "lint": "eslint . --fix && prettier -w .",
         "lint:check": "eslint . && prettier -c .",
         "build": "rm -rf dist; node_modules/.bin/tsc --project .",
-        "test": "npm run build && node --test dist/**/*.test.js",
+        "test": "npm run build && node --test dist/*.test.js",
         "test:bun": "bun test src/bun/app.test.ts",
         "start:bun": "bun src/bun/server.ts",
         "prepublishOnly": "npm run build"
