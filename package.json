@@ -7,12 +7,15 @@
         "access": "public"
     },
     "bin": {
-        "flight": "dist/flight.js"
+        "flight": "dist/flight.js",
+        "flight-bun": "src/bun/server.ts"
     },
     "scripts": {
         "lint": "eslint . --fix && prettier -w .",
         "build": "rm -rf dist; node_modules/.bin/tsc --project .",
-        "test": "npm run build && node --test dist/spa-pipeline.test.js",
+        "test": "npm run build && node --test dist/**/*.test.js",
+        "test:bun": "bun test src/bun/app.test.ts",
+        "start:bun": "bun src/bun/server.ts",
         "prepublishOnly": "npm run build"
     },
     "repository": {
@@ -28,6 +31,8 @@
     "files": [
         "dist/flight.js",
         "dist/spa-pipeline.js",
+        "dist/backend-discovery.js",
+        "src/bun",
         "README.md",
         "CHANGELOG.md",
         "readme-assets"
@@ -50,7 +55,7 @@
         "koa-connect-history-api-fallback": "^0.3.1",
         "koa-helmet": "^9.0.0",
         "koa-logger": "^4.0.0",
-        "koa-ratelimit": "^5.1.0",
+        "koa-ratelimit": "^6.0.0",
         "koa-redis": "^4.0.1",
         "koa-send": "^5.0.1",
         "koa-session": "^6.4.0",
