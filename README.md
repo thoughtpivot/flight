@@ -252,7 +252,7 @@ export default router.routes()
 
 ## React + Vite (same Flight commands)
 
-Flight does **not** choose Vue vs React—it runs **`vite`** / **`vite build`** from your **`app_home`**; your **`vite.config.*`** and app **`package.json`** select the framework. The `@thoughtpivot/flight` package includes **`@vitejs/plugin-react`** alongside **`@vitejs/plugin-vue`** so React+Vite apps get the same style of transitive plugin coverage as Vue apps. You still install the UI runtime in **your** app. Flight ships **Vite 8** and matching plugins; apps that stay on Vite 6 should pin an older Flight release until they upgrade.
+Flight does **not** choose Vue vs React—it runs **`vite`** / **`vite build`** from your **`app_home`**; your **`vite.config.*`** and app **`package.json`** select the framework. The `@thoughtpivot/flight` package includes **`@vitejs/plugin-react`** alongside **`@vitejs/plugin-vue`** so React+Vite apps get the same style of transitive plugin coverage as Vue apps. You still install the UI runtime in **your** app. Flight ships **Vite 8** and matching plugins; apps that stay on Vite 6 should pin **`@thoughtpivot/flight@2.0.2`** until they upgrade.
 
 ```bash
 npm install react react-dom
@@ -416,10 +416,42 @@ Other `FLIGHT_*` knobs from the Node server (`FLIGHT_MODE`, `FLIGHT_PORT`, `FLIG
 
 ## Requirements
 
-- Node.js **16.x** or higher (the `flight` binary)
+- Node.js **`^20.19.0` or `>=22.12.0`** (the `flight` binary; matches Vite 8 / ioredis 6)
 - [Bun](https://bun.sh) 1.x (only for `flight-bun` / `npm run test:bun`)
 - **Redis** (sessions / rate limit / cache integrations on the Node server; optional for the Bun runtime)
 - **TypeScript** in your app if you author `.backend.ts` modules as TS
+
+## CI and npm publish
+
+GitHub Actions is the only CI/publish path:
+
+| Workflow                                                         | When                                                     | What it does                                                    |
+| ---------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------- |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml)           | Pull requests and pushes to `main`                       | `npm ci`, `lint:check`, `npm test` on Node 20 and 22            |
+| [`.github/workflows/publish.yml`](.github/workflows/publish.yml) | GitHub Release published (or manual `workflow_dispatch`) | Re-runs checks, then `npm publish --access public --provenance` |
+
+### One-time npm setup (Trusted Publishing)
+
+Preferred: no long-lived npm token in GitHub.
+
+1. Sign in at [npmjs.com](https://www.npmjs.com/) as a maintainer of `@thoughtpivot/flight`.
+2. Open the package → **Settings** → **Trusted Publisher**.
+3. Add GitHub Actions with:
+    - **Organization / user:** `thoughtpivot`
+    - **Repository:** `flight`
+    - **Workflow filename:** `publish.yml`
+    - **Environment name:** `npm` (must match the workflow `environment:`)
+4. In the GitHub repo, create an **Environment** named `npm` (Settings → Environments). Optional: require reviewers before publish.
+
+Fallback if Trusted Publishing is unavailable: add a repository or environment secret **`NPM_TOKEN`** (granular token with read/write to `@thoughtpivot/flight`). The publish workflow already passes it as `NODE_AUTH_TOKEN` when present.
+
+### Cut a release
+
+1. Land the version bump on `main` (`package.json` + `CHANGELOG.md`).
+2. Create a GitHub Release whose tag is `v` + that version (example: package `3.0.0` → tag `v3.0.0`).
+3. Publishing the release runs `.github/workflows/publish.yml`. The job fails if the tag and `package.json` version disagree.
+
+Dry-run without publishing: Actions → **Publish** → **Run workflow** → leave **dry_run** checked.
 
 ## License
 
@@ -427,7 +459,7 @@ MIT
 
 ## Contributing
 
-Issues and pull requests are welcome. Flight improves fastest with real workloads—if you hit an edge case, open an issue with a minimal repro.
+Issues and pull requests are welcome. Flight improves fastest with real workloads—if you hit an edge case, open an issue with a minimal repro. Run `npm test` and `npm run lint:check` before opening a PR.
 
 ## Acknowledgments
 
