@@ -3,7 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { backendDiscoveryIgnorePatterns, dedupeStrings, mergeExcludePaths, normalizeExcludePaths } from './backend-discovery.js'
+import {
+    backendDiscoveryIgnorePatterns,
+    dedupeStrings,
+    mergeExcludePaths,
+    normalizeExcludePaths
+} from './backend-discovery.js'
 
 test('normalizeExcludePaths splits commas and drops blanks', () => {
     assert.deepEqual(normalizeExcludePaths(null), [])

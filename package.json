@@ -1,10 +1,13 @@
 {
     "name": "@thoughtpivot/flight",
-    "version": "2.1.0",
+    "version": "3.0.0",
     "description": "A web server designed for running full stack, component based applications at enterprise scale.",
     "main": "src/flight.ts",
     "publishConfig": {
         "access": "public"
+    },
+    "engines": {
+        "node": "^20.19.0 || >=22.12.0"
     },
     "bin": {
         "flight": "dist/flight.js",
@@ -12,6 +15,7 @@
     },
     "scripts": {
         "lint": "eslint . --fix && prettier -w .",
+        "lint:check": "eslint . && prettier -c .",
         "build": "rm -rf dist; node_modules/.bin/tsc --project .",
         "test": "npm run build && node --test dist/**/*.test.js",
         "test:bun": "bun test src/bun/app.test.ts",

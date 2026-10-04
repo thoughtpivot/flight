@@ -1,21 +1,31 @@
 # Changelog
 
-## Unreleased
+## 3.0.0
+
+### Breaking
+
+- **Vite 8** toolchain: `vite` `^8.3.2`, `@vitejs/plugin-react` `^6.1.1`, `@vitejs/plugin-vue` `^6.0.9`, and `vite-plugin-vuetify` `^2.1.3`. `@vitejs/plugin-react` 6 requires Vite 8 (`vite/internal`). Apps that still pin Vite 6 should stay on `@thoughtpivot/flight@2.0.2` until they upgrade.
+- **`ioredis` 6**: requires Node.js 20+ and uses **RESP3** by default. Set `protocol: 2` on the Redis client if a server still needs the ioredis v5 wire protocol.
+- **Node engines**: `^20.19.0 || >=22.12.0` (aligned with Vite 8 / ioredis 6).
 
 ### Added
 
-- **Bun runtime** (`src/bun`, `flight-bun` / `bun src/bun/server.ts`). This is the Flight edge server from Vaso Lubomirov's Bun research: `Bun.serve`, zero runtime dependencies on the native path, `/healthz`, and the same middleware jobs (logging, security headers, CORS, gzip, rate limit, sessions, response cache) implemented with Bun and Web `Request` / `Response`.
-- **Koa compatibility on that runtime.** A `*.backend.ts` file may still `export default router.routes()`. Those backends are mounted through Koa and `koa-bodyparser`, so an existing Flight app can boot on Bun before each route is rewritten to a path → handler fragment. Compiled `*.backend.js` files are discovered too.
+- **Bun runtime** (`src/bun`, `flight-bun` / `bun src/bun/server.ts`): `Bun.serve`, `/healthz`, and the same middleware jobs (logging, security headers, CORS, gzip, rate limit, sessions, response cache) on the native Bun path.
+- **Koa compatibility on that runtime.** A `*.backend.ts` file may still `export default router.routes()`. Those backends are mounted through Koa and `koa-bodyparser`. Compiled `*.backend.js` files are discovered too.
 - **`FLIGHT_TRUST_PROXY` on the Bun rate limiter.** `X-Forwarded-For` is ignored unless the proxy is trusted.
+- **`@vitejs/plugin-react`** as a dependency (alongside `@vitejs/plugin-vue`) so React + Vite apps get the same style of transitive plugin coverage as Vue apps.
+- Broader Node test coverage for SPA fallback, env flags, rate-limit skips, and backend exclude paths. `npm test` runs every compiled `dist/**/*.test.js` file.
+- GitHub Actions **CI** (`.github/workflows/ci.yml`) and **npm publish** (`.github/workflows/publish.yml`) with provenance. CircleCI is retired.
 
 ### Changed
 
-- **Vite 8** toolchain: `vite` `^8.3.2`, `@vitejs/plugin-react` `^6.1.1`, `@vitejs/plugin-vue` `^6.0.9`, and `vite-plugin-vuetify` `^2.1.3`. `@vitejs/plugin-react` 6 requires Vite 8 (`vite/internal`), so the React plugin bump cannot land alone. Apps that still pin Vite 6 should stay on Flight 2.1.x until they upgrade.
+- Dependency majors also include `koa-helmet` 9 and `koa-ratelimit` 6.
+- SPA index paths with `..` stay inside the dist root; exclude paths named `..foo` stay inside `app_home`; `.` / app-root excludes warn instead of ignoring everything.
 
 ### Notes
 
-- The Node / Koa `flight` binary is unchanged. Sessions on Bun stay off until `FLIGHT_SESSION_SECRET` is set (no default secret). Rate limiting stays off until `FLIGHT_RATE_LIMIT_MAX` is greater than zero.
-- Cluster benchmarks and container deploy manifests from the research harness are not republished here.
+- The Node / Koa `flight` binary is unchanged in role. Sessions on Bun stay off until `FLIGHT_SESSION_SECRET` is set. Rate limiting on Bun stays off until `FLIGHT_RATE_LIMIT_MAX` is greater than zero.
+- Git changelog entry **2.1.0** below was prepared in-repo but never published to npm; its React + Vite docs/plugin work ships in this 3.0.0 release together with the Vite 8 upgrade.
 
 ## 2.1.0
 

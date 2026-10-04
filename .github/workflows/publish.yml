@@ -1,0 +1,63 @@
+name: Publish
+
+on:
+    release:
+        types: [published]
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: Pack and validate without publishing to npm
+                type: boolean
+                default: true
+
+permissions:
+    contents: read
+    id-token: write
+
+jobs:
+    publish:
+        name: Publish to npm
+        runs-on: ubuntu-latest
+        environment: npm
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '22'
+                  registry-url: https://registry.npmjs.org
+                  cache: npm
+
+            - name: Install
+              run: npm ci
+
+            - name: Lint
+              run: npm run lint:check
+
+            - name: Test
+              run: npm test
+
+            - name: Verify release tag matches package.json
+              if: github.event_name == 'release'
+              run: |
+                  set -euo pipefail
+                  tag="${GITHUB_REF_NAME}"
+                  expected="${tag#v}"
+                  actual="$(node -p "require('./package.json').version")"
+                  if [ "$actual" != "$expected" ]; then
+                    echo "GitHub release tag '$tag' does not match package.json version '$actual' (expected '$expected')."
+                    exit 1
+                  fi
+
+            - name: Publish
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+                    npm publish --dry-run --access public --provenance
+                  else
+                    npm publish --access public --provenance
+                  fi
