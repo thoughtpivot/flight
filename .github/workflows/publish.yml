@@ -26,9 +26,10 @@ jobs:
             - name: Setup Node.js
               uses: actions/setup-node@v4
               with:
-                  node-version: '22'
+                  # Trusted Publisher requires Node >= 22.14 and npm >= 11.5.1
+                  node-version: '22.14.0'
                   registry-url: https://registry.npmjs.org
-                  cache: npm
+                  package-manager-cache: false
 
             - name: Install
               run: npm ci
@@ -51,16 +52,15 @@ jobs:
                     exit 1
                   fi
 
-            # Auth: NPM_TOKEN on the GitHub `npm` environment (granular publish
-            # token). id-token remains for provenance attestations.
+            # Auth: Trusted Publisher (OIDC). Do not set NODE_AUTH_TOKEN — a
+            # classic/granular token overrides OIDC and hits EOTP / E_STAGE_REQUIRED.
+            # Provenance is automatic with Trusted Publisher; --provenance is fine too.
             - name: Publish
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
               run: |
                   set -euo pipefail
-                  if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-                    echo "NPM_TOKEN is not set on the GitHub Actions 'npm' environment."
-                    exit 1
+                  unset NODE_AUTH_TOKEN || true
+                  if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "${NPM_CONFIG_USERCONFIG}" ]; then
+                    sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG}" || true
                   fi
                   if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
                     npm publish --dry-run --access public --provenance
