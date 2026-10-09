@@ -48,7 +48,7 @@
         "@vitejs/plugin-vue": "^6.0.9",
         "@vue/language-plugin-pug": "^2.2.0",
         "core-js": "^3.40.0",
-        "dotenv": "^17.4.2",
+        "dotenv": "^18.0.5",
         "esbuild": "^0.28.0",
         "fast-glob": "^3.3.3",
         "ioredis": "^6.0.0",
