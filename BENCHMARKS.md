@@ -2,7 +2,14 @@
 
 This page records how `flight` (Node, Koa on `node:cluster`) and `flight-bun` (`Bun.serve`) were compared on one commit, and the raw numbers. Scripts and raw output are in [`bench/`](bench/). Run on 2026-10-14.
 
-Read the [caveats](#caveats) before quoting any number. The short version: these are hello-route micro-benchmarks, and on 4 cores a 4-worker Node cluster beat a single `flight-bun` process.
+## Read this first
+
+- Single-core results measure per-core efficiency. They are not a statement about a whole machine.
+- **On 4 cores a Node cluster still beats single-process Bun on raw throughput: 80.7k vs 53.8k req/s** (Bun-native route; 41.5k for a Koa route on Bun). The shipped Bun runtime is one process and does not use four cores the way a 4-worker `node:cluster` does.
+- The throughput numbers come from a hello route (`GET /api/hello`). They are micro-benchmarks and say little about a real application with a database and business logic.
+- Node and Bun ran different default middleware (see [Workload](#workload)), so the comparison is runtime plus shipped defaults, not runtime alone.
+- Node's 1.18 s startup includes the tsx loader that the README names for loading `*.backend.ts`. A ts-node variant measured 1.23 s.
+- Not measured: end-to-end Flight with a real SPA and a database, multi-process Bun against a Node cluster, container size and pod cold start, production-mode middleware on both sides, and long soak memory growth. See the full [caveats](#caveats).
 
 ## What was compared
 
@@ -16,7 +23,7 @@ Read the [caveats](#caveats) before quoting any number. The short version: these
 ## Environment
 
 - 8 vCPU Intel Xeon VM, 15 GB RAM, Debian 13, kernel 6.12. It was a shared VM with other processes running, so expect some noise.
-- Node 20.19.2, Bun 1.4.2, wrk 4.1.0 (load), hyperfine 1.19.0 (timing).
+- Node 20.19.2 (the repo `.nvmrc` says 20.11), Bun 1.4.2 (CI pins 1.4.3), wrk 4.1.0 (load), hyperfine 1.19.0 (timing).
 - Redis and Postgres were not used by Flight in these runs. Flight kept sessions and cache in memory.
 
 ## Method
@@ -30,11 +37,12 @@ Read the [caveats](#caveats) before quoting any number. The short version: these
 
 ### Workload
 
-`GET /api/hello` returns `{"message":"Hello from Flight!"}`. Three variants:
+`GET /api/hello` returns `{"message":"Hello from Flight!"}`. Four variants, named by the letter that `bench/env.sh` and the scripts use:
 
-- (a) Node/Koa: `router.routes()` backend ([`apps/koa`](bench/apps/koa/api/hello.backend.ts)).
-- (b) the **same Koa file** on `flight-bun`, through its Koa-compat layer.
-- (c) a Bun-native route-map backend on `flight-bun` ([`apps/native`](bench/apps/native/api/hello.backend.ts)).
+- `t`: Node/Koa, a `router.routes()` backend ([`apps/koa`](bench/apps/koa/api/hello.backend.ts)) loaded through tsx. This is the Node baseline.
+- `a`: the same Node/Koa file, loaded through ts-node (transpile-only).
+- `b`: the **same Koa file** on `flight-bun`, through its Koa-compat layer.
+- `c`: a Bun-native route-map backend on `flight-bun` ([`apps/native`](bench/apps/native/api/hello.backend.ts)).
 
 Middleware is each runtime's shipped default for a non-dev, non-production mode. Node runs koa-logger (it cannot be turned off, and its output went to `/dev/null`), session, CORS and bodyparser. Bun runs security headers, CORS and compression, and does not log by default. Neither side rate-limits. The two stacks are therefore not identical, and this is not a measure of Koa vs Bun.Serve in isolation.
 
@@ -57,6 +65,8 @@ The ts-node p99 on its first run was 44.6 ms, which is why the Node p99 range is
 | ------------------ | ----------------------------------------- | --------------- | -------- |
 | Bun-native backend | 1.182 s ± 0.049 (tsx) / 1.228 s (ts-node) | **47 ms ± 10**  | **25x**  |
 | Koa backend on Bun | 1.182 s                                   | **123 ms ± 16** | **9.6x** |
+
+The Node time includes the tsx loader that the README names for loading `*.backend.ts`. The ts-node variant measured 1.23 s.
 
 ## Results: 4 cores
 
@@ -90,7 +100,7 @@ Single-core numbers measure per-core efficiency. They do not mean `flight-bun` i
 
 ## Reproduce
 
-The scripts have no machine-specific paths. They need Linux with `taskset`, `ss`, [wrk](https://github.com/wg/wrk), [hyperfine](https://github.com/sharkdp/hyperfine) and Bun. They start servers on ports 4001-4004.
+The scripts have no machine-specific paths. They need Linux with `taskset`, `ss`, [wrk](https://github.com/wg/wrk), [hyperfine](https://github.com/sharkdp/hyperfine) and Bun. They start servers on ports 4001-4004. `bench/env.sh` defines the server variants and has no machine-specific values. Each script's header comment lists its options.
 
 ```bash
 npm ci && npm run build            # builds dist/ for the Node variants
