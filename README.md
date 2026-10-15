@@ -385,6 +385,8 @@ FLIGHT_MODE=development bun src/bun/server.ts
 
 `npm run test:bun` runs the Bun suite. `npm test` stays the Node suite.
 
+**Benchmarks:** Bun vs Node method, hardware, raw results and caveats are in [BENCHMARKS.md](BENCHMARKS.md), with the scripts in [`bench/`](bench/).
+
 The Bun server uses `Bun.serve` and loads TypeScript directly. It exposes `GET /healthz` and the same edge jobs as the Node server (logging, security headers, CORS, gzip, rate limit, sessions, response cache) without Koa packages on the native path. Redis is optional (`FLIGHT_REDIS_URL`); without it, sessions and cache use memory.
 
 **Two backend contracts can be mixed in one app.**
