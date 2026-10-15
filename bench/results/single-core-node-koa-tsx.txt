@@ -1,0 +1,5 @@
+idle_rss_kb 217684 procs 2
+ 50% 4.95ms  99% 24.93ms Requests/sec: 18372.11 
+ 50% 4.62ms  99% 15.47ms Requests/sec: 19484.04 
+ 50% 4.57ms  99% 10.41ms Requests/sec: 21095.71 
+post_load_rss_kb 206164
