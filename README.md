@@ -14,15 +14,16 @@ Flight is **open source** from **[ThoughtPivot](https://github.com/thoughtpivot)
 
 `flight-bun` runs Flight on `Bun.serve`. On a single pinned core, at the same commit, compared with the Node `flight` binary (hello-route micro-benchmark):
 
-| | Node (`flight`) | Bun (`flight-bun`) |
-|---|---|---|
-| Req/s, Bun-native route | 19,651 | **61,110** (3.1x) |
-| Req/s, existing Koa route | 19,651 | **38,826** (2.0x) |
-| p99 latency | 10-25 ms | **~3 ms** (native) |
-| Start to first response | 1.18 s (TypeScript via tsx) | **47 ms** |
-| Idle RSS | 218 MB (primary + 1 worker) | **27 MB** |
+|                           | Node (`flight`)             | Bun (`flight-bun`) |
+| ------------------------- | --------------------------- | ------------------ |
+| Req/s, Bun-native route   | 19,651                      | **61,110** (3.1x)  |
+| Req/s, existing Koa route | 19,651                      | **38,826** (2.0x)  |
+| p99 latency               | 10-25 ms                    | **~3 ms** (native) |
+| Start to first response   | 1.18 s (TypeScript via tsx) | **47 ms**          |
+| Idle RSS                  | 218 MB (primary + 1 worker) | **27 MB**          |
 
 **What changed:**
+
 - native `Bun.serve` routes
 - Bun-native middleware (security headers, CORS, gzip, rate limit, sessions, cache)
 - `.backend.ts` loaded directly, with no build step
