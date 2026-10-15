@@ -1,0 +1,5 @@
+idle_rss_kb 47160 procs 1
+ Latency 2.53ms 1.47ms 45.33ms 95.99%  50% 2.24ms  99% 7.00ms Requests/sec: 40910.85 
+ 50% 2.36ms  99% 6.25ms Requests/sec: 39829.27 
+ 50% 2.59ms  99% 7.20ms Requests/sec: 35736.39 
+post_load_rss_kb 65880
