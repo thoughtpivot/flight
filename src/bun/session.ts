@@ -1,7 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 
 import type { SessionConfig } from './config'
-import type { Middleware } from './middleware'
+import { preserveStreaming, type Middleware } from './middleware'
 import type { KVStore } from './store'
 
 /** Request carrying the mutable session object. */
@@ -63,11 +63,14 @@ function serializeCookie(name: string, value: string, maxAgeSec: number): string
 function appendSetCookie(response: Response, cookie: string): Response {
     const headers = new Headers(response.headers)
     headers.append('set-cookie', cookie)
-    return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers
-    })
+    return preserveStreaming(
+        response,
+        new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers
+        })
+    )
 }
 
 /**

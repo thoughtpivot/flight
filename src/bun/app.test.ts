@@ -1,10 +1,13 @@
 import { afterEach, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import Router from '@koa/router'
+
 import { openFlight, type FlightServer } from './app'
 import { loadConfig, type Config } from './config'
+import { createKoaDispatcher } from './koa-compat'
 import { safeTarget } from './static'
 
 const servers: FlightServer[] = []
@@ -189,3 +192,274 @@ test('opt-in response cache serves the second GET from the store', async () => {
     expect(hit.headers.get('x-flight-cache')).toBe('HIT')
     expect(await hit.json()).toEqual({ n: 1 })
 })
+
+/**
+ * Add a Koa backend that streams server-sent events and ends one route early.
+ * A router that does not handle these paths is mounted first, in this file, so the
+ * order does not depend on how the directory is listed.
+ */
+async function writeStreamBackend(dir: string, flagPath: string, gapMs: number): Promise<void> {
+    await writeFile(
+        join(dir, 'stream.backend.ts'),
+        `import Router from '@koa/router'
+import { writeFileSync } from 'node:fs'
+const miss = new Router()
+miss.get('/api/not-events', (ctx) => {
+    ctx.body = { ok: true }
+})
+const router = new Router()
+const flag = ${JSON.stringify(flagPath)}
+const gapMs = ${gapMs}
+
+router.get('/api/events', async (ctx) => {
+    ctx.respond = false
+    ctx.res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive'
+    })
+    ctx.res.write('data: one\\n\\n')
+    await new Promise((resolve) => setTimeout(resolve, gapMs))
+    ctx.res.write('data: two\\n\\n')
+    ctx.res.end()
+})
+
+router.get('/api/events-open', (ctx) => {
+    ctx.respond = false
+    ctx.res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache'
+    })
+    ctx.res.write('data: hello\\n\\n')
+    const timer = setInterval(() => {
+        ctx.res.write('data: beat\\n\\n')
+    }, 400)
+    timer.unref()
+    ctx.res.on('close', () => {
+        clearInterval(timer)
+        writeFileSync(flag, 'closed')
+    })
+})
+
+router.get('/api/early-end', (ctx) => {
+    ctx.respond = false
+    ctx.res.writeHead(201, { 'content-type': 'text/plain; charset=utf-8' })
+    try {
+        ctx.res.write('from-route')
+    } finally {
+        ctx.res.end()
+    }
+})
+
+router.get('/api/big-text', (ctx) => {
+    ctx.body = 'z'.repeat(2048)
+})
+
+export default (ctx, next) => miss.routes()(ctx, () => router.routes()(ctx, next))
+`
+    )
+}
+
+/**
+ * Read from an open body until `needle` shows up, and record how long that chunk took.
+ */
+async function readUntil(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    needle: string
+): Promise<{ text: string; firstByteMs: number }> {
+    const decoder = new TextDecoder()
+    const started = performance.now()
+    let text = ''
+    let firstByteMs = 0
+    while (!text.includes(needle)) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (!text) firstByteMs = performance.now() - started
+        text += decoder.decode(value, { stream: true })
+    }
+    return { text, firstByteMs }
+}
+
+test('FLIGHT_IDLE_TIMEOUT defaults to 10 seconds and clamps to Bun maximum', () => {
+    expect(loadConfig({}).idleTimeout).toBe(10)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '0' }).idleTimeout).toBe(0)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '0.0' }).idleTimeout).toBe(0)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '0.5' }).idleTimeout).toBe(1)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '1.2' }).idleTimeout).toBe(2)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '30' }).idleTimeout).toBe(30)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '999' }).idleTimeout).toBe(255)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '-5' }).idleTimeout).toBe(10)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: 'nope' }).idleTimeout).toBe(10)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '' }).idleTimeout).toBe(10)
+})
+
+/**
+ * Two routers in a fixed order. The first does not handle the path under test.
+ * `@koa/router` assigns `ctx.matched` for that first router and only `push`es after that.
+ */
+function orderedRouters(setup: (router: Router) => void) {
+    const miss = new Router()
+    miss.get('/api/not-events', (ctx) => {
+        ctx.body = { ok: true }
+    })
+    const hit = new Router()
+    setup(hit)
+    return [miss.routes(), hit.routes()]
+}
+
+test('a non-matching router mounted first still streams the later router', async () => {
+    const dispatch = await createKoaDispatcher(
+        orderedRouters((router) => {
+            router.get('/api/events', (ctx) => {
+                ctx.respond = false
+                ctx.res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+                ctx.res.write('data: one\n\n')
+            })
+        }),
+        '1mb'
+    )
+
+    const response = await dispatch(new Request('http://127.0.0.1/api/events'))
+    expect(response).not.toBeNull()
+    expect(response!.status).toBe(200)
+    expect(response!.headers.get('content-type')).toContain('text/event-stream')
+    const reader = response!.body?.getReader()
+    if (!reader) throw new Error('expected a response body')
+    const first = await readUntil(reader, 'one')
+    expect(first.text).toContain('data: one')
+    await reader.cancel()
+
+    const missed = await dispatch(new Request('http://127.0.0.1/nowhere'))
+    expect(missed).toBeNull()
+})
+
+test('a non-matching router mounted first still returns an early end', async () => {
+    const dispatch = await createKoaDispatcher(
+        orderedRouters((router) => {
+            router.get('/api/early-end', (ctx) => {
+                ctx.respond = false
+                ctx.res.writeHead(201, { 'content-type': 'text/plain; charset=utf-8' })
+                try {
+                    ctx.res.write('from-route')
+                } finally {
+                    ctx.res.end()
+                }
+            })
+        }),
+        '1mb'
+    )
+
+    const response = await dispatch(new Request('http://127.0.0.1/api/early-end'))
+    expect(response).not.toBeNull()
+    expect(response!.status).toBe(201)
+    expect(await response!.text()).toBe('from-route')
+})
+
+test('Koa SSE chunks arrive before the stream ends', async () => {
+    const dir = await makeApp()
+    await writeStreamBackend(dir, join(dir, 'closed.flag'), 300)
+    const { url } = await boot({
+        FLIGHT_APP_HOME: dir,
+        FLIGHT_SECURITY_ENABLED: 'true',
+        FLIGHT_CORS_ENABLED: 'true'
+    })
+
+    const response = await fetch(`${url}/api/events`, { headers: { accept: 'text/event-stream' } })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error('expected a response body')
+
+    const first = await readUntil(reader, 'one')
+    expect(first.text).toContain('data: one')
+    expect(first.text).not.toContain('two')
+    expect(first.firstByteMs).toBeLessThan(250)
+
+    const rest = await readUntil(reader, 'two')
+    expect(rest.text).toContain('data: two')
+})
+
+test('closing the SSE client emits close on the Koa response', async () => {
+    const dir = await makeApp()
+    const flag = join(dir, 'closed.flag')
+    await writeStreamBackend(dir, flag, 300)
+    const { url } = await boot({ FLIGHT_APP_HOME: dir })
+
+    const controller = new AbortController()
+    const response = await fetch(`${url}/api/events-open`, { signal: controller.signal })
+    expect(response.status).toBe(200)
+    const reader = response.body?.getReader()
+    const first = await reader?.read()
+    expect(new TextDecoder().decode(first?.value)).toContain('hello')
+
+    controller.abort()
+    const started = Date.now()
+    let body = ''
+    while (Date.now() - started < 2000) {
+        try {
+            body = await readFile(flag, 'utf8')
+            break
+        } catch {
+            await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+    }
+    expect(body).toBe('closed')
+})
+
+test('a Koa route that ends inside the handler is not replaced by the SPA 404', async () => {
+    const dir = await makeApp()
+    await writeStreamBackend(dir, join(dir, 'closed.flag'), 300)
+    const { url } = await boot({ FLIGHT_APP_HOME: dir })
+
+    const response = await fetch(`${url}/api/early-end`, { headers: { accept: 'text/html' } })
+    expect(response.status).toBe(201)
+    expect(await response.text()).toBe('from-route')
+})
+
+test('gzip does not buffer a Koa event stream', async () => {
+    const dir = await makeApp()
+    await writeStreamBackend(dir, join(dir, 'closed.flag'), 300)
+    const { url } = await boot({
+        FLIGHT_APP_HOME: dir,
+        FLIGHT_COMPRESS_ENABLED: 'true',
+        FLIGHT_COMPRESS_THRESHOLD: '1024'
+    })
+
+    const plain = await fetch(`${url}/api/big-text`, { headers: { 'accept-encoding': 'gzip' } })
+    expect(plain.status).toBe(200)
+    expect(plain.headers.get('content-encoding')).toBe('gzip')
+    expect((await plain.arrayBuffer()).byteLength).toBe(2048)
+
+    const events = await fetch(`${url}/api/events`, {
+        headers: { accept: 'text/event-stream', 'accept-encoding': 'gzip' }
+    })
+    expect(events.status).toBe(200)
+    expect(events.headers.get('content-encoding')).toBeNull()
+    const reader = events.body?.getReader()
+    if (!reader) throw new Error('expected a response body')
+    const first = await readUntil(reader, 'one')
+    expect(first.text).toContain('data: one')
+    expect(first.text).not.toContain('two')
+    expect(first.firstByteMs).toBeLessThan(250)
+})
+
+test(
+    'SSE stays open past FLIGHT_IDLE_TIMEOUT',
+    async () => {
+        const dir = await makeApp()
+        await writeStreamBackend(dir, join(dir, 'closed.flag'), 5000)
+        const { url } = await boot({ FLIGHT_APP_HOME: dir, FLIGHT_IDLE_TIMEOUT: '1' })
+
+        const response = await fetch(`${url}/api/events`)
+        expect(response.headers.get('content-type')).toContain('text/event-stream')
+        const reader = response.body?.getReader()
+        if (!reader) throw new Error('expected a response body')
+        const first = await readUntil(reader, 'one')
+        expect(first.text).toContain('data: one')
+        expect(first.text).not.toContain('two')
+        const rest = await readUntil(reader, 'two')
+        expect(rest.text).toContain('data: two')
+    },
+    { timeout: 12000 }
+)

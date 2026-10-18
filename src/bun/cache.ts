@@ -1,5 +1,5 @@
 import type { CacheConfig } from './config'
-import { withHeaders, type Middleware } from './middleware'
+import { isStreamingResponse, withHeaders, type Middleware } from './middleware'
 import type { KVStore } from './store'
 
 /** Stored GET response. Only text and JSON bodies are kept. */
@@ -35,6 +35,7 @@ export function cache(cfg: CacheConfig, store: KVStore): Middleware {
         }
 
         const response = await next()
+        if (isStreamingResponse(response)) return withHeaders(response, { 'x-flight-cache': 'MISS' })
         const cacheControl = response.headers.get('cache-control') || ''
         const match = /max-age=(\d+)/.exec(cacheControl)
         if (response.status === 200 && match && req.method === 'GET') {
