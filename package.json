@@ -82,7 +82,7 @@
         "@types/koa-session": "^6.4.5",
         "@types/koa-static": "^4.0.4",
         "@types/node": "^22.19.17",
-        "@types/supertest": "^6.0.2",
+        "@types/supertest": "^7.2.1",
         "@typescript-eslint/parser": "^8.59.1",
         "eslint": "^9.39.4",
         "eslint-plugin-jsdoc": "^50.8.0",
