@@ -427,7 +427,7 @@ The Bun server uses `Bun.serve` and loads TypeScript directly. It exposes `GET /
 
 Koa routes can stream. Set `ctx.respond = false`, send the status line with `writeHead` (for example `content-type: text/event-stream`), and write chunks with `ctx.res.write`. `flight-bun` returns that body as a `ReadableStream` as soon as the stream starts, instead of waiting for `res.end()`. Gzip skips `text/event-stream` and any other body that is still streaming. A client disconnect emits `close` on `ctx.res`; stop heartbeats and drop subscribers there. Set the headers and the first write before the first `await` so they are on the response that is already in flight.
 
-`FLIGHT_IDLE_TIMEOUT` is the `Bun.serve` idle timeout in seconds (default `10`, the same as Bun; maximum `255`; `0` disables it). Event-stream responses call `server.timeout(req, 0)` so a heartbeat slower than the idle timeout stays connected.
+`FLIGHT_IDLE_TIMEOUT` is the `Bun.serve` idle timeout in seconds. The default is `10`, the same as Bun. An explicit `0` disables it. Positive fractions round up to at least `1` (`0.5` becomes `1`). Negative values and values that are not numbers use the default `10`. Values above `255` are clamped to Bun's maximum. Event-stream responses call `server.timeout(req, 0)` so a heartbeat slower than the idle timeout stays connected.
 
 **Two backend contracts can be mixed in one app.**
 
@@ -445,15 +445,15 @@ Existing Koa files keep working. `export default router.routes()` is mounted thr
 
 In development (`FLIGHT_MODE=development`) the API stays on `FLIGHT_PORT` (default 3000) and Vite is spawned on 3001. In production the built SPA is read from `FLIGHT_DIST_PATH` (default `<app home>/dist`) with an `index.html` fallback. `/api`, `/health`, and `/healthz` do not fall back.
 
-| Variable                 | Default          | Bun runtime                                                                                                                |
-| ------------------------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `FLIGHT_SESSION_SECRET`  | unset            | Sessions stay **off** until this is set. There is no baked-in secret.                                                      |
-| `FLIGHT_RATE_LIMIT_MAX`  | `0`              | Rate limit stays **off** until this is greater than zero.                                                                  |
-| `FLIGHT_TRUST_PROXY`     | false            | When `1` / `true` / `yes`, the limiter uses `X-Forwarded-For`. Otherwise that header is ignored.                           |
-| `FLIGHT_REDIS_URL`       | unset            | `redis://host:6379` for shared sessions and cache.                                                                         |
-| `FLIGHT_CACHE_ENABLED`   | false            | Cache GET responses that send `Cache-Control: max-age`.                                                                    |
-| `FLIGHT_STATIC_PREFIXES` | `/assets,/fonts` | GET/HEAD under these prefixes skip the rate limit.                                                                         |
-| `FLIGHT_IDLE_TIMEOUT`    | `10`             | Seconds before Bun closes an idle socket. `0` disables it. Values above `255` are clamped. SSE turns this off per request. |
+| Variable                 | Default          | Bun runtime                                                                                                                                                                                       |
+| ------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FLIGHT_SESSION_SECRET`  | unset            | Sessions stay **off** until this is set. There is no baked-in secret.                                                                                                                             |
+| `FLIGHT_RATE_LIMIT_MAX`  | `0`              | Rate limit stays **off** until this is greater than zero.                                                                                                                                         |
+| `FLIGHT_TRUST_PROXY`     | false            | When `1` / `true` / `yes`, the limiter uses `X-Forwarded-For`. Otherwise that header is ignored.                                                                                                  |
+| `FLIGHT_REDIS_URL`       | unset            | `redis://host:6379` for shared sessions and cache.                                                                                                                                                |
+| `FLIGHT_CACHE_ENABLED`   | false            | Cache GET responses that send `Cache-Control: max-age`.                                                                                                                                           |
+| `FLIGHT_STATIC_PREFIXES` | `/assets,/fonts` | GET/HEAD under these prefixes skip the rate limit.                                                                                                                                                |
+| `FLIGHT_IDLE_TIMEOUT`    | `10`             | Idle seconds before Bun closes a socket. Explicit `0` disables it. Fractions round up to at least 1. Negative or invalid values use `10`. Above `255` is clamped. SSE turns this off per request. |
 
 Other `FLIGHT_*` knobs from the Node server (`FLIGHT_MODE`, `FLIGHT_PORT`, `FLIGHT_APP_HOME`, `FLIGHT_EXCLUDE_PATHS`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_PAYLOAD_LIMIT`) apply here too. `FLIGHT_MAX_WORKERS` does not: see the cluster note above. `GET /healthz` returns `ok` and is not rate limited.
 

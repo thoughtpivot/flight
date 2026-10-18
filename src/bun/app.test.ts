@@ -3,8 +3,11 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import Router from '@koa/router'
+
 import { openFlight, type FlightServer } from './app'
 import { loadConfig, type Config } from './config'
+import { createKoaDispatcher } from './koa-compat'
 import { safeTarget } from './static'
 
 const servers: FlightServer[] = []
@@ -192,12 +195,18 @@ test('opt-in response cache serves the second GET from the store', async () => {
 
 /**
  * Add a Koa backend that streams server-sent events and ends one route early.
+ * A router that does not handle these paths is mounted first, in this file, so the
+ * order does not depend on how the directory is listed.
  */
 async function writeStreamBackend(dir: string, flagPath: string, gapMs: number): Promise<void> {
     await writeFile(
         join(dir, 'stream.backend.ts'),
         `import Router from '@koa/router'
 import { writeFileSync } from 'node:fs'
+const miss = new Router()
+miss.get('/api/not-events', (ctx) => {
+    ctx.body = { ok: true }
+})
 const router = new Router()
 const flag = ${JSON.stringify(flagPath)}
 const gapMs = ${gapMs}
@@ -246,7 +255,7 @@ router.get('/api/big-text', (ctx) => {
     ctx.body = 'z'.repeat(2048)
 })
 
-export default router.routes()
+export default (ctx, next) => miss.routes()(ctx, () => router.routes()(ctx, next))
 `
     )
 }
@@ -274,9 +283,76 @@ async function readUntil(
 test('FLIGHT_IDLE_TIMEOUT defaults to 10 seconds and clamps to Bun maximum', () => {
     expect(loadConfig({}).idleTimeout).toBe(10)
     expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '0' }).idleTimeout).toBe(0)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '0.0' }).idleTimeout).toBe(0)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '0.5' }).idleTimeout).toBe(1)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '1.2' }).idleTimeout).toBe(2)
     expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '30' }).idleTimeout).toBe(30)
     expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '999' }).idleTimeout).toBe(255)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '-5' }).idleTimeout).toBe(10)
     expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: 'nope' }).idleTimeout).toBe(10)
+    expect(loadConfig({ FLIGHT_IDLE_TIMEOUT: '' }).idleTimeout).toBe(10)
+})
+
+/**
+ * Two routers in a fixed order. The first does not handle the path under test.
+ * `@koa/router` assigns `ctx.matched` for that first router and only `push`es after that.
+ */
+function orderedRouters(setup: (router: Router) => void) {
+    const miss = new Router()
+    miss.get('/api/not-events', (ctx) => {
+        ctx.body = { ok: true }
+    })
+    const hit = new Router()
+    setup(hit)
+    return [miss.routes(), hit.routes()]
+}
+
+test('a non-matching router mounted first still streams the later router', async () => {
+    const dispatch = await createKoaDispatcher(
+        orderedRouters((router) => {
+            router.get('/api/events', (ctx) => {
+                ctx.respond = false
+                ctx.res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+                ctx.res.write('data: one\n\n')
+            })
+        }),
+        '1mb'
+    )
+
+    const response = await dispatch(new Request('http://127.0.0.1/api/events'))
+    expect(response).not.toBeNull()
+    expect(response!.status).toBe(200)
+    expect(response!.headers.get('content-type')).toContain('text/event-stream')
+    const reader = response!.body?.getReader()
+    if (!reader) throw new Error('expected a response body')
+    const first = await readUntil(reader, 'one')
+    expect(first.text).toContain('data: one')
+    await reader.cancel()
+
+    const missed = await dispatch(new Request('http://127.0.0.1/nowhere'))
+    expect(missed).toBeNull()
+})
+
+test('a non-matching router mounted first still returns an early end', async () => {
+    const dispatch = await createKoaDispatcher(
+        orderedRouters((router) => {
+            router.get('/api/early-end', (ctx) => {
+                ctx.respond = false
+                ctx.res.writeHead(201, { 'content-type': 'text/plain; charset=utf-8' })
+                try {
+                    ctx.res.write('from-route')
+                } finally {
+                    ctx.res.end()
+                }
+            })
+        }),
+        '1mb'
+    )
+
+    const response = await dispatch(new Request('http://127.0.0.1/api/early-end'))
+    expect(response).not.toBeNull()
+    expect(response!.status).toBe(201)
+    expect(await response!.text()).toBe('from-route')
 })
 
 test('Koa SSE chunks arrive before the stream ends', async () => {

@@ -57,7 +57,10 @@ export interface Config {
     spaDenyPrefixes: string[]
     payloadLimit: string
     logging: boolean
-    /** Seconds `Bun.serve` waits on an idle socket. `0` disables it. Clamped to Bun's maximum of 255. */
+    /**
+     * Seconds `Bun.serve` waits on an idle socket.
+     * Explicit `0` disables it. Positive fractions round up to at least 1. Clamped to 255.
+     */
     idleTimeout: number
     redisUrl?: string
     cors: CorsConfig
@@ -88,13 +91,16 @@ function num(value: string | undefined, fallback: number): number {
 }
 
 /**
- * Parse `FLIGHT_IDLE_TIMEOUT` seconds. The default matches Bun's 10s idle timeout.
- * `0` disables it. Anything above Bun's maximum of 255 is clamped.
+ * Parse `FLIGHT_IDLE_TIMEOUT` seconds. Missing, blank, negative, and non-numeric values use 10.
+ * An explicit `0` disables the timeout. Positive fractions round up to at least 1.
+ * Anything above Bun's maximum of 255 is clamped.
  */
 function idleSeconds(value: string | undefined): number {
-    const parsed = num(value, 10)
-    if (parsed <= 0) return 0
-    return Math.min(255, Math.floor(parsed))
+    if (value === undefined || value.trim() === '') return 10
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed) || parsed < 0) return 10
+    if (parsed === 0) return 0
+    return Math.min(255, Math.max(1, Math.ceil(parsed)))
 }
 
 /**

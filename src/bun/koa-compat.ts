@@ -15,6 +15,8 @@ class MockResponse extends EventEmitter {
     /** Left unset so `on-finished` does not treat a plain object as a socket. */
     socket: EventEmitter | null = null
     flightMatched = false
+    /** Re-read whether any mounted router has matched. Runs before the dispatcher decides. */
+    refreshMatch: () => void = () => {}
     private chunks: Buffer[] = []
     private headers = new Map<string, string | string[]>()
     /** True once `writeHead`, `write`, or `ctx.respond = false` starts a live body. */
@@ -77,6 +79,7 @@ class MockResponse extends EventEmitter {
     startStream() {
         if (this.streaming || this.finished || this.writableEnded) return
         this.streaming = true
+        this.refreshMatch()
         queueMicrotask(() => {
             this.emit('stream-open')
         })
@@ -111,6 +114,7 @@ class MockResponse extends EventEmitter {
         this.finished = true
         this.writableEnded = true
         this.headersSent = true
+        this.refreshMatch()
         this.closeController()
         this.emit('finish')
         this.emitClose()
@@ -221,9 +225,14 @@ function requestFromFetch(request: Request, body: Buffer): Readable {
 /** Koa context fields the compat layer observes. */
 interface KoaCtx {
     matched?: unknown
+    /** Set by `@koa/router` when the path and the method both match. */
+    _matchedRoute?: unknown
     respond?: unknown
     res: MockResponse
 }
+
+/** Arrays whose `push` already updates `flightMatched`. Later routers append instead of assigning. */
+const observedMatches = new WeakSet<object>()
 
 /**
  * Run one Fetch request through a Koa callback. Returns null when no route matched,
@@ -246,6 +255,7 @@ function callbackToFetch(callback: (req: Readable, res: MockResponse) => void) {
         await new Promise<void>((resolve, reject) => {
             let settled = false
             const finish = () => {
+                res.refreshMatch()
                 if (settled) return
                 settled = true
                 resolve()
@@ -273,11 +283,40 @@ function callbackToFetch(callback: (req: Readable, res: MockResponse) => void) {
 }
 
 /**
- * Mark the response as soon as a router assigns a non-empty `ctx.matched`.
- * That happens before the route handler runs, including a handler that calls `res.end()` immediately.
+ * True when this request hit a route.
+ * `@koa/router` assigns `ctx.matched` for the first router only. Every later router
+ * `push`es onto that same array, and sets `_matchedRoute` when the method matches.
+ */
+function hasMatch(ctx: KoaCtx): boolean {
+    const matched = ctx.matched
+    if (Array.isArray(matched) && matched.length > 0) return true
+    return typeof ctx._matchedRoute === 'string' && ctx._matchedRoute.length > 0
+}
+
+/**
+ * Notice routes appended with `push` after the first router assigned `ctx.matched`.
+ */
+function observePushes(ctx: KoaCtx, layers: unknown[]) {
+    if (observedMatches.has(layers)) return
+    observedMatches.add(layers)
+    const original = Array.prototype.push
+    layers.push = function (this: unknown[], ...items: unknown[]) {
+        const result = original.apply(this, items)
+        ctx.res.refreshMatch()
+        return result
+    }
+}
+
+/**
+ * Keep `flightMatched` current for every router, including ones that only `push`.
+ * The dispatcher reads it again when a stream opens or the response finishes.
  */
 function trackMatch(ctx: KoaCtx) {
+    ctx.res.refreshMatch = () => {
+        ctx.res.flightMatched = hasMatch(ctx)
+    }
     let matched = ctx.matched
+    if (Array.isArray(matched)) observePushes(ctx, matched)
     Object.defineProperty(ctx, 'matched', {
         configurable: true,
         enumerable: true,
@@ -286,7 +325,8 @@ function trackMatch(ctx: KoaCtx) {
         },
         set(value: unknown) {
             matched = value
-            if (Array.isArray(value) && value.length > 0) ctx.res.flightMatched = true
+            if (Array.isArray(value)) observePushes(ctx, value)
+            ctx.res.refreshMatch()
         }
     })
 }
