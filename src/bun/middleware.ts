@@ -34,11 +34,22 @@ export function compose(middlewares: Middleware[]): (req: Request, core: Handler
 export function withHeaders(response: Response, extra: Record<string, string>): Response {
     const headers = new Headers(response.headers)
     for (const [key, value] of Object.entries(extra)) headers.set(key, value)
-    return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers
-    })
+    return preserveStreaming(
+        response,
+        new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers
+        })
+    )
+}
+
+/**
+ * Keep a live-stream mark when a middleware copies the body onto a new `Response`.
+ */
+export function preserveStreaming(source: Response, target: Response): Response {
+    if (source.body && target.body && streamingBodies.has(source.body)) streamingBodies.add(target.body)
+    return target
 }
 
 /**
@@ -104,6 +115,33 @@ export function cors(cfg: CorsConfig): Middleware {
     }
 }
 
+/** Bodies that must not be read to completion. Keyed by the stream so header copies keep the mark. */
+const streamingBodies = new WeakSet<ReadableStream<Uint8Array>>()
+
+/**
+ * Remember a body that stays open until the producer ends it.
+ * Compression and the response cache must not buffer it.
+ */
+export function markStreaming(body: ReadableStream<Uint8Array>) {
+    streamingBodies.add(body)
+}
+
+/**
+ * True for `text/event-stream` and for any body marked as a live stream.
+ */
+export function isStreamingResponse(response: Response): boolean {
+    const type = response.headers.get('content-type') || ''
+    if (/text\/event-stream/i.test(type)) return true
+    return response.body != null && streamingBodies.has(response.body)
+}
+
+/**
+ * True when this response is a server-sent event stream.
+ */
+export function isEventStream(response: Response): boolean {
+    return /text\/event-stream/i.test(response.headers.get('content-type') || '')
+}
+
 /**
  * True when the content type is worth gzipping.
  */
@@ -131,6 +169,7 @@ export function compress(cfg: CompressionConfig): Middleware {
         }
         if (response.headers.get('content-encoding')) return response
         if (!(req.headers.get('accept-encoding') || '').includes('gzip')) return response
+        if (isStreamingResponse(response)) return response
         if (!compressible(response.headers.get('content-type') || '')) return response
 
         const bytes = new Uint8Array(await response.arrayBuffer())

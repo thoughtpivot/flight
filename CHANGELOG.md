@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.0.1
+
+### Fixed
+
+- **Koa streaming on Bun.** A `router.routes()` backend can server-sent-event the usual Koa way (`ctx.respond = false`, `writeHead`, `write`, `end`). `flight-bun` returns a `ReadableStream` when that body starts, instead of buffering until `res.end()`. A stream that never calls `end()` no longer hangs with an empty body.
+- A Koa route that finishes the response inside the handler is kept. `flight-bun` no longer drops it and answers with the SPA `404`.
+- Client disconnect emits `close` on the mock response, so `res.on('close')` can clear heartbeats and subscribers.
+- Gzip skips `text/event-stream` and any body that is still streaming, so compression cannot wait on an open stream. The response cache skips those bodies too.
+
+### Added
+
+- **`FLIGHT_IDLE_TIMEOUT`** (seconds). Default `10` (Bun's own default). `0` disables the server idle timeout. Values above `255` are clamped to Bun's maximum. Server-sent event responses disable the idle timeout for that request.
+
+### Documentation
+
+- On Bun, `FLIGHT_MAX_WORKERS` and Node's `cluster` module do not apply (`flight-bun` is one process). The Bun rate limiter is an in-memory per-process `Map` and does not use Redis.
+
 ## 3.0.0
 
 ### Breaking

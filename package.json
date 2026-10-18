@@ -1,6 +1,6 @@
 {
     "name": "@thoughtpivot/flight",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "description": "A web server designed for running full stack, component based applications at enterprise scale.",
     "main": "src/flight.ts",
     "publishConfig": {

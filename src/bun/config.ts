@@ -57,6 +57,8 @@ export interface Config {
     spaDenyPrefixes: string[]
     payloadLimit: string
     logging: boolean
+    /** Seconds `Bun.serve` waits on an idle socket. `0` disables it. Clamped to Bun's maximum of 255. */
+    idleTimeout: number
     redisUrl?: string
     cors: CorsConfig
     security: SecurityConfig
@@ -83,6 +85,16 @@ function num(value: string | undefined, fallback: number): number {
     if (value === undefined || value === '') return fallback
     const parsed = Number(value)
     return Number.isFinite(parsed) ? parsed : fallback
+}
+
+/**
+ * Parse `FLIGHT_IDLE_TIMEOUT` seconds. The default matches Bun's 10s idle timeout.
+ * `0` disables it. Anything above Bun's maximum of 255 is clamped.
+ */
+function idleSeconds(value: string | undefined): number {
+    const parsed = num(value, 10)
+    if (parsed <= 0) return 0
+    return Math.min(255, Math.floor(parsed))
 }
 
 /**
@@ -121,6 +133,7 @@ export function loadConfig(env: Env = process.env): Config {
         spaDenyPrefixes: prefixes(env.FLIGHT_SPA_DENY_PREFIXES, '/api,/health,/healthz'),
         payloadLimit: env.FLIGHT_PAYLOAD_LIMIT || '1mb',
         logging: bool(env.FLIGHT_LOGGING, mode === 'development'),
+        idleTimeout: idleSeconds(env.FLIGHT_IDLE_TIMEOUT),
         redisUrl: env.FLIGHT_REDIS_URL || undefined,
         cors: {
             enabled: bool(env.FLIGHT_CORS_ENABLED, true),

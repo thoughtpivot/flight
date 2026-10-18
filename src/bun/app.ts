@@ -7,6 +7,7 @@ import {
     compose,
     compress,
     cors,
+    isEventStream,
     logger,
     rateLimit,
     security,
@@ -24,6 +25,19 @@ export interface FlightServer extends AddressServer {
     stop(closeActiveConnections?: boolean): void
 }
 
+/** Slice of `Bun.serve`'s server used to adjust the idle timeout for one request. */
+interface BunHttpServer {
+    timeout(request: Request, seconds: number): void
+}
+
+/**
+ * Turn the idle timeout off for server-sent events so a quiet heartbeat is not cut off.
+ */
+function relaxIdleTimeout(req: Request, response: Response, bunServer?: BunHttpServer): Response {
+    if (bunServer && isEventStream(response)) bunServer.timeout(req, 0)
+    return response
+}
+
 /**
  * Wrap discovered routes so every method runs through the middleware onion.
  * OPTIONS is registered when CORS is on, otherwise Bun answers 405 before our middleware runs.
@@ -37,11 +51,13 @@ function wrapRoutes(
     for (const [path, value] of Object.entries(routes)) {
         if (typeof value === 'function') {
             const handler = value
-            wrapped[path] = (req: Request) => run(req, () => handler(req))
+            wrapped[path] = (req: Request, bunServer?: BunHttpServer) =>
+                run(req, () => handler(req)).then((response) => relaxIdleTimeout(req, response, bunServer))
         } else {
             const methods: MethodMap = {}
             for (const [method, handler] of Object.entries(value)) {
-                methods[method] = (req: Request) => run(req, () => handler(req))
+                methods[method] = (req: Request, bunServer?: BunHttpServer) =>
+                    run(req, () => handler(req)).then((response) => relaxIdleTimeout(req, response, bunServer))
             }
             if (corsEnabled && !methods.OPTIONS) {
                 methods.OPTIONS = (req: Request) => run(req, () => new Response(null, { status: 204 }))
@@ -99,12 +115,13 @@ export async function createApp(cfg: Config, server?: () => AddressServer | unde
     return {
         enabled,
         routes,
-        fetch: async (req: Request) => {
-            return run(req, async () => {
+        fetch: async (req: Request, bunServer?: BunHttpServer) => {
+            const response = await run(req, async () => {
                 const fromKoa = koa ? await koa(req) : null
                 if (fromKoa) return fromKoa
                 return (await serveStatic(req)) ?? new Response('Not Found', { status: 404 })
             })
+            return relaxIdleTimeout(req, response, bunServer)
         },
         error(err: unknown) {
             console.error('flight-bun error:', err)
@@ -125,8 +142,9 @@ export async function openFlight(
     server = Bun.serve({
         port: listen.port ?? cfg.port,
         hostname: listen.hostname ?? cfg.hostname,
+        idleTimeout: cfg.idleTimeout,
         routes: app.routes as Record<string, Handler | MethodMap>,
-        fetch: app.fetch,
+        fetch: (req: Request, bunServer: BunHttpServer) => app.fetch(req, bunServer),
         error: app.error
     }) as FlightServer
 
@@ -134,6 +152,7 @@ export async function openFlight(
     console.log(
         `flight-bun (${cfg.mode}) listening on :${server.port} — app_home=${cfg.appHome}${dist}\n` +
             `flight-bun: middleware [${app.enabled.join(', ') || 'none'}]` +
+            `, idleTimeout=${cfg.idleTimeout}s` +
             (cfg.redisUrl ? `, redis=${cfg.redisUrl}` : ', redis=(in-memory)')
     )
     return server

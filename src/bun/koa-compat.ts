@@ -2,6 +2,9 @@ import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 
 import type { KoaMiddleware } from './backends'
+import { markStreaming } from './middleware'
+
+type WriteCallback = (error?: Error | null) => void
 
 /** Node-style response stand-in that Koa's `res.end()` can finish. */
 class MockResponse extends EventEmitter {
@@ -14,6 +17,13 @@ class MockResponse extends EventEmitter {
     flightMatched = false
     private chunks: Buffer[] = []
     private headers = new Map<string, string | string[]>()
+    /** True once `writeHead`, `write`, or `ctx.respond = false` starts a live body. */
+    private streaming = false
+    /** True while `end()` is copying its final chunk, so that write does not start a stream. */
+    private ending = false
+    private closeEmitted = false
+    private clientAborted = false
+    private controller: ReadableStreamDefaultController<Uint8Array> | null = null
 
     /** Store a response header. Repeated Set-Cookie values accumulate. */
     setHeader(name: string, value: string | number | string[]) {
@@ -38,40 +48,122 @@ class MockResponse extends EventEmitter {
         this.headers.delete(name.toLowerCase())
     }
 
-    /** Record the status line. Koa calls this before `end` when headers are flushed. */
-    writeHead(status: number, headers?: Record<string, string | string[]>) {
+    /** Record the status line. Calling this begins a streamed body. */
+    writeHead(
+        status: number,
+        reason?: string | Record<string, string | number | string[]>,
+        maybeHeaders?: Record<string, string | number | string[]>
+    ) {
         this.statusCode = status
+        const headers = typeof reason === 'string' || reason === undefined ? maybeHeaders : reason
         if (headers) {
             for (const [key, value] of Object.entries(headers)) this.setHeader(key, value)
         }
         this.headersSent = true
+        if (!this.finished && !this.ending) this.startStream()
         return this
     }
 
-    /** No-op. Koa sometimes flushes headers early. */
+    /** Flush headers and begin a streamed body. */
     flushHeaders() {
         this.headersSent = true
+        if (!this.finished && !this.ending) this.startStream()
     }
 
-    /** Buffer a chunk. */
-    write(chunk?: string | Buffer) {
-        if (chunk) this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    /**
+     * Begin a streamed body without waiting for `end()`.
+     * Headers set in the same turn are included; the Fetch response resolves on the next microtask.
+     */
+    startStream() {
+        if (this.streaming || this.finished || this.writableEnded) return
+        this.streaming = true
+        queueMicrotask(() => {
+            this.emit('stream-open')
+        })
+    }
+
+    /** Buffer a chunk, or enqueue it when a live stream is already open. */
+    write(chunk?: string | Buffer | Uint8Array, encoding?: BufferEncoding | WriteCallback, callback?: WriteCallback) {
+        if (this.writableEnded || this.clientAborted) return false
+        let cb: WriteCallback | undefined
+        let enc: BufferEncoding | undefined
+        if (typeof encoding === 'function') cb = encoding
+        else {
+            enc = encoding
+            if (typeof callback === 'function') cb = callback
+        }
+        if (chunk != null && chunk.length !== 0) {
+            const bytes = typeof chunk === 'string' ? Buffer.from(chunk, enc) : Buffer.from(chunk)
+            this.enqueue(bytes)
+        }
+        if (!this.ending) this.startStream()
+        if (cb) queueMicrotask(() => cb!())
         return true
     }
 
     /** Finish the response and emit the events `on-finished` listens for. */
-    end(chunk?: string | Buffer) {
-        if (chunk) this.write(chunk)
+    end(chunk?: string | Buffer | Uint8Array, encoding?: BufferEncoding | WriteCallback, callback?: WriteCallback) {
+        if (this.writableEnded) return this
+        this.ending = true
+        if (chunk != null && chunk !== '') this.write(chunk, encoding, callback)
+        else if (typeof encoding === 'function') queueMicrotask(() => encoding())
+        else if (typeof callback === 'function') queueMicrotask(() => callback())
         this.finished = true
         this.writableEnded = true
         this.headersSent = true
+        this.closeController()
         this.emit('finish')
-        this.emit('close')
+        this.emitClose()
         return this
+    }
+
+    /** Client went away. `res.on('close')` handlers use this to drop heartbeats and subscribers. */
+    clientDisconnect() {
+        if (this.clientAborted) return
+        this.clientAborted = true
+        this.closeController()
+        this.emitClose()
     }
 
     /** Build the Fetch response from the buffered status, headers, and body. */
     toResponse(): Response {
+        if (this.streaming && !this.finished) return this.liveResponse()
+        const body = this.chunks.length ? Buffer.concat(this.chunks) : null
+        return new Response(body, { status: this.statusCode, headers: this.headerInit() })
+    }
+
+    /** Push bytes into the live controller, or hold them until that controller exists. */
+    private enqueue(bytes: Buffer) {
+        if (!this.controller) {
+            this.chunks.push(bytes)
+            return
+        }
+        try {
+            this.controller.enqueue(bytes)
+        } catch {
+            // The stream is already closed.
+        }
+    }
+
+    /** Close the live body if the consumer has already attached. */
+    private closeController() {
+        if (!this.controller) return
+        try {
+            this.controller.close()
+        } catch {
+            // Already closed or cancelled.
+        }
+    }
+
+    /** Emit `close` once, whether the route finished or the client aborted. */
+    private emitClose() {
+        if (this.closeEmitted) return
+        this.closeEmitted = true
+        this.emit('close')
+    }
+
+    /** Copy stored headers into a Fetch `Headers` object. */
+    private headerInit(): Headers {
         const headers = new Headers()
         for (const [key, value] of this.headers) {
             if (Array.isArray(value)) {
@@ -80,8 +172,26 @@ class MockResponse extends EventEmitter {
                 headers.set(key, value)
             }
         }
-        const body = this.chunks.length ? Buffer.concat(this.chunks) : null
-        return new Response(body, { status: this.statusCode, headers })
+        return headers
+    }
+
+    /**
+     * Return a Fetch response whose body stays open until `end()` or the client disconnects.
+     * Chunks written before this runs are flushed first.
+     */
+    private liveResponse(): Response {
+        const stream = new ReadableStream<Uint8Array>({
+            start: (controller) => {
+                this.controller = controller
+                for (const chunk of this.chunks.splice(0)) controller.enqueue(chunk)
+                if (this.finished || this.clientAborted) this.closeController()
+            },
+            cancel: () => {
+                this.clientDisconnect()
+            }
+        })
+        markStreaming(stream)
+        return new Response(stream, { status: this.statusCode, headers: this.headerInit() })
     }
 }
 
@@ -108,6 +218,13 @@ function requestFromFetch(request: Request, body: Buffer): Readable {
     return req
 }
 
+/** Koa context fields the compat layer observes. */
+interface KoaCtx {
+    matched?: unknown
+    respond?: unknown
+    res: MockResponse
+}
+
 /**
  * Run one Fetch request through a Koa callback. Returns null when no route matched,
  * so the caller can still serve the SPA.
@@ -121,19 +238,75 @@ function callbackToFetch(callback: (req: Readable, res: MockResponse) => void) {
         const req = requestFromFetch(request, body)
         const res = new MockResponse()
 
+        const onAbort = () => res.clientDisconnect()
+        if (request.signal.aborted) onAbort()
+        else request.signal.addEventListener('abort', onAbort, { once: true })
+        res.once('finish', () => request.signal.removeEventListener('abort', onAbort))
+
         await new Promise<void>((resolve, reject) => {
-            res.on('finish', () => resolve())
-            res.on('error', reject)
+            let settled = false
+            const finish = () => {
+                if (settled) return
+                settled = true
+                resolve()
+            }
+            res.on('finish', finish)
+            res.on('stream-open', finish)
+            res.on('error', (err) => {
+                if (settled) return
+                settled = true
+                reject(err)
+            })
             try {
                 callback(req, res)
             } catch (err) {
-                reject(err)
+                if (!settled) {
+                    settled = true
+                    reject(err)
+                }
             }
         })
 
         if (!res.flightMatched) return null
         return res.toResponse()
     }
+}
+
+/**
+ * Mark the response as soon as a router assigns a non-empty `ctx.matched`.
+ * That happens before the route handler runs, including a handler that calls `res.end()` immediately.
+ */
+function trackMatch(ctx: KoaCtx) {
+    let matched = ctx.matched
+    Object.defineProperty(ctx, 'matched', {
+        configurable: true,
+        enumerable: true,
+        get() {
+            return matched
+        },
+        set(value: unknown) {
+            matched = value
+            if (Array.isArray(value) && value.length > 0) ctx.res.flightMatched = true
+        }
+    })
+}
+
+/**
+ * `ctx.respond = false` means the route owns the raw response and Koa must not wait for `end()`.
+ */
+function trackRespond(ctx: KoaCtx) {
+    let respond = ctx.respond
+    Object.defineProperty(ctx, 'respond', {
+        configurable: true,
+        enumerable: true,
+        get() {
+            return respond
+        },
+        set(value: unknown) {
+            respond = value
+            if (value === false) ctx.res.startStream()
+        }
+    })
 }
 
 /**
@@ -150,7 +323,9 @@ export async function createKoaDispatcher(
     const bodyParser = bodyParserModule.default
     const app = new Koa()
 
-    app.use(async (ctx: any, next: () => Promise<void>) => {
+    app.use(async (ctx: KoaCtx, next: () => Promise<void>) => {
+        trackMatch(ctx)
+        trackRespond(ctx)
         await next()
         ctx.res.flightMatched = Array.isArray(ctx.matched) && ctx.matched.length > 0
     })
