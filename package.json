@@ -27,7 +27,7 @@
         "url": "git+https://github.com/thoughtpivot/flight.git"
     },
     "author": "",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "bugs": {
         "url": "https://github.com/thoughtpivot/flight/issues"
     },
@@ -39,6 +39,8 @@
         "src/bun",
         "README.md",
         "CHANGELOG.md",
+        "LICENSE",
+        "NOTICE",
         "readme-assets"
     ],
     "dependencies": {

@@ -498,7 +498,7 @@ Dry-run without publishing: Actions → **Publish** → **Run workflow** → lea
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Contributing
 
