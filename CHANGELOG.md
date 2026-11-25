@@ -1,10 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- README brought up to date with 3.0.2. Every environment variable that `flight` and `flight-bun` read is now documented, including 18 that were missing (the Bun CORS, security, compression, session, cache, logging, and rate-limit settings, plus `FLIGHT_HOSTNAME`). The Node and Bun tables say which runtime reads what, and where the same name behaves differently (`FLIGHT_EXCLUDE_PATHS`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_DIST_PATH`, the session cookie and lifetime settings).
+- New README sections: loading `.backend.ts` files on Node (a loader is needed before Node 22.18 once a file uses TypeScript-only syntax), and **Upgrading to 3.x**, which covers 3.0.0, 3.0.1, and the 3.0.2 rate-limit change.
+- Corrected: the Node `FLIGHT_APP_SECRET` default is a public placeholder, so set it in production. The Node `FLIGHT_DIST_PATH` default is `../dist`, the parent of `app_home`. The Node rate limiter keys on the `X-Forwarded-For` header whenever it is present, whether or not `FLIGHT_TRUST_PROXY` is set. The publish workflow does not use `NPM_TOKEN`. CI also runs the Bun suite. The SPA pipeline is Option B throughout.
+
 ## 3.0.2
 
 ### Fixed
 
-- **Rate limiter now runs before the router on the Node runtime.** In 3.0.0 and 3.0.1 the production limiter was mounted after the router, so a request that matched a route (every `/api` route included) never reached it. Only unmatched requests were counted. The limiter is now mounted before the router in both the SPA pipeline and the legacy production stack, so every request is counted and gets a `429` once it exceeds the limit (1200 per client per 60 seconds, unchanged).
+- **Rate limiter now runs before the router on the Node runtime.** In every earlier release (the order is the same in each tag back to 1.0.7) the production limiter was mounted after the router, so a request that matched a route (every `/api` route included) never reached it. Only unmatched requests were counted. The limiter is now mounted before the router in both the SPA pipeline and the legacy production stack, so every request is counted and gets a `429` once it exceeds the limit (1200 per client per 60 seconds, unchanged).
 
 ### Added
 
@@ -31,6 +39,10 @@
 ### Documentation
 
 - On Bun, `FLIGHT_MAX_WORKERS` and Node's `cluster` module do not apply (`flight-bun` is one process). The Bun rate limiter is an in-memory per-process `Map` and does not use Redis.
+
+### License
+
+- Relicensed from MIT to the **Apache License 2.0**. `LICENSE` is the canonical Apache-2.0 text, `NOTICE` records Copyright 2026 ThoughtPivot, Inc., and `package.json` declares `Apache-2.0`. 3.0.0 was published under MIT.
 
 ## 3.0.0
 

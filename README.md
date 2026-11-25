@@ -12,7 +12,7 @@ Flight is **open source** from **[ThoughtPivot](https://github.com/thoughtpivot)
 
 ## ⚡ Now on Bun
 
-`flight-bun` runs Flight on `Bun.serve`. On a single pinned core, at the same commit, compared with the Node `flight` binary (hello-route micro-benchmark):
+`flight-bun` runs Flight on `Bun.serve`. On a single pinned core, at the same commit, compared with the Node `flight` binary (hello-route micro-benchmark, measured 2026-10-14 against commit `b0d8689`, before 3.0.1 and 3.0.2):
 
 |                           | Node (`flight`)             | Bun (`flight-bun`) |
 | ------------------------- | --------------------------- | ------------------ |
@@ -31,9 +31,9 @@ Flight is **open source** from **[ThoughtPivot](https://github.com/thoughtpivot)
 
 Existing `export default router.routes()` backends mount unchanged through the Koa-compat layer.
 
-**Note:** `flight-bun` is a single process. `FLIGHT_MAX_WORKERS` and Node's `cluster` module are not used. On 4 cores, a 4-worker Node cluster served more requests (80.7k vs 53.8k req/s), so scale `flight-bun` with replicas. The Bun rate limiter is an in-memory `Map` in that process and does not use Redis. The two sides run their own default middleware, which differs. Method and raw data: https://github.com/thoughtpivot/flight/blob/main/bench/BENCHMARKS.md (scripts in [`bench/`](https://github.com/thoughtpivot/flight/tree/main/bench)).
+**Note:** `flight-bun` is a single process. `FLIGHT_MAX_WORKERS` and Node's `cluster` module are not used. On 4 cores, a 4-worker Node cluster served more requests (80.7k vs 53.8k req/s), so scale `flight-bun` with replicas. The Bun rate limiter is an in-memory `Map` in that process and does not use Redis. `flight-bun` is configured only through environment variables and ignores Node-style CLI flags such as `--port`. The two sides run their own default middleware, which differs. Method and raw data: https://github.com/thoughtpivot/flight/blob/main/bench/BENCHMARKS.md (scripts in [`bench/`](https://github.com/thoughtpivot/flight/tree/main/bench)).
 
-`bun src/bun/server.ts` or `flight-bun`
+`flight-bun` (installed package) or `bun src/bun/server.ts` (a clone of this repo)
 
 Early Bun research and benchmarks for Flight and Scribe by Vasilen Lyubomirov ([github.com/VasilenL](https://github.com/VasilenL)), whose work helped start this.
 
@@ -79,12 +79,12 @@ npm init -y
 2. Install Flight and its dependencies:
 
 ```bash
-npm install @thoughtpivot/flight ioredis
+npm install @thoughtpivot/flight
 ```
 
-For a **React** UI, also install `react`, `react-dom`, and (with TypeScript) `@types/react` / `@types/react-dom` as dev dependencies. For **Vue**, install `vue` and wire **`@vitejs/plugin-vue`** in **`vite.config`**.
+Flight installs `koa`, `@koa/router`, and `ioredis` as dependencies. If your package manager does not hoist them, install `@koa/router` in your app too. For a **React** UI, also install `react`, `react-dom`, and (with TypeScript) `@types/react` / `@types/react-dom` as dev dependencies. For **Vue**, install `vue` and wire **`@vitejs/plugin-vue`** in **`vite.config`**.
 
-3. Ensure Redis is running locally or set environment variables (see table below).
+3. Ensure Redis is running locally, or point the Node server at yours with `FLIGHT_REDIS_HOST` and `FLIGHT_REDIS_PORT` (see the configuration table). The Node server uses Redis for sessions and rate limiting. Redis is optional on Bun.
 
 4. Create a component with a backend route:
 
@@ -117,7 +117,7 @@ export default router.routes()
 }
 ```
 
-Use **`FLIGHT_DISABLE_VITE`**, **`FLIGHT_DIST_PATH`**, and related env vars in **`.env`** for production built-assets mode (see the configuration table below).
+Use **`FLIGHT_DISABLE_VITE`**, **`FLIGHT_DIST_PATH`**, and related env vars in **`.env`** for production built-assets mode (see the configuration table below). In production, Flight runs **`npx vite build`** at startup unless **`disable_vite`** is true. An API-only project with no `index.html` should set **`FLIGHT_DISABLE_VITE=true`**; otherwise the build fails and logs `exec error` (the server still starts).
 
 6. Start the server:
 
@@ -161,7 +161,15 @@ FLIGHT_MODE=development flight-bun
 FLIGHT_MODE=production flight-bun
 ```
 
-From a clone of this repo, before the package is published, that is `bun src/bun/server.ts`. Existing `export default router.routes()` files keep working. New files can export a Web `Request` / `Response` route map. Details, env vars, and the backend contract are in [Bun runtime](#bun-runtime).
+From a clone of this repo, that is `bun src/bun/server.ts` (or `npm run start:bun`). Existing `export default router.routes()` files keep working. New files can export a Web `Request` / `Response` route map. Details, env vars, and the backend contract are in [Bun runtime](#bun-runtime).
+
+### Loading `.backend.ts` files on Node
+
+The `flight` binary is compiled JavaScript that `require()`s your `**/*.backend.ts` files, so Node has to be able to read them:
+
+- **Node 22.18 and later** strip TypeScript types by default. No loader is needed. Node does not strip types for files under `node_modules`.
+- **Node 20.19 and 22.12 to 22.17** read a `.backend.ts` file as plain JavaScript. The Quick Start example works because it contains no TypeScript-only syntax. A type annotation or `import type` fails at startup with `SyntaxError: Unexpected token`. Install a loader and preload it, for example `npm install -D tsx` and then `NODE_OPTIONS="--require tsx/cjs" npx flight --mode production`. `ts-node` in transpile-only mode also works (`node -r ts-node/register/transpile-only node_modules/.bin/flight`).
+- **Bun** runs TypeScript natively and needs no loader.
 
 ## Development vs production
 
@@ -171,7 +179,7 @@ The Node server picks **`mode`** as: **`FLIGHT_MODE`** (if set and non-empty), e
 | ---------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Vite**         | Child process: `npx vite --port 3001 --host 0.0.0.0` (HMR for **Vue or React**, per your `vite.config`). | If **`disable_vite` is false**: `exec('npx vite build')` is triggered once at worker startup. If **`disable_vite` is true**: no Vite build. |
 | **Listen port**  | API + sessions on **`--port`** / `FLIGHT_PORT` (default **3000**). UI dev server on **3001**.            | Same **`--port`** / `FLIGHT_PORT` for the worker.                                                                                           |
-| **Static / SPA** | The Vite dev server serves UI; Flight does **not** mount the production static/SPA stack.                | See **Production SPA pipeline** below: when **`production`** + **`disable_vite`**, Flight uses **Option A** by default unless opted out.    |
+| **Static / SPA** | The Vite dev server serves UI; Flight does **not** mount the production static/SPA stack.                | See **Production SPA pipeline** below: when **`production`** + **`disable_vite`**, Flight uses **Option B** by default unless opted out.    |
 | **Typical use**  | Local full-stack with HMR.                                                                               | CI-built `dist` served by Flight (or behind a load balancer).                                                                               |
 
 **Edge cases**
@@ -192,31 +200,33 @@ Flight loads a **`.env`** file from the **current working directory** at startup
 
 **Registered CLI options:** Flight registers **`--exclude_paths`**, **`--mode`**, **`--port`**, **`--app_home`**, **`--app_key`**, **`--app_secret`**, **`--payload_limit`**, and **`--disable_vite`** (with kebab-case aliases where listed in `--help`). yargs is not in **strict** mode, so additional flags may still appear on argv if you extend the entrypoint.
 
-| Setting (CLI / argv)                 | Environment variable                 | Default          | Use case                                                                                                                                                                                                        |
-| ------------------------------------ | ------------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--exclude_paths`, `--exclude-paths` | `FLIGHT_EXCLUDE_PATHS`               | _(empty)_        | Skip subtrees when globbing `**/*.backend.ts` (monorepo vendor trees, fixtures).                                                                                                                                |
-| `--app_home`                         | `FLIGHT_APP_HOME`                    | `.`              | Repository root; `process.chdir` target before discovery and static paths.                                                                                                                                      |
-| `--app_key`                          | `FLIGHT_APP_KEY`                     | `flightApp`      | Session cookie name.                                                                                                                                                                                            |
-| `--app_secret`                       | `FLIGHT_APP_SECRET`                  | _(see code)_     | Cookie signing secret(s); comma-separated for key rotation.                                                                                                                                                     |
-| _(argv)_                             | `FLIGHT_SESSION_DURATION_MS`         | `86400000`       | Session `maxAge` in ms.                                                                                                                                                                                         |
-| `--port`                             | `FLIGHT_PORT`                        | `3000`           | HTTP listen port (all modes).                                                                                                                                                                                   |
-| `--payload_limit`                    | `FLIGHT_PAYLOAD_LIMIT`               | `1mb`            | `koa-bodyparser` JSON limit.                                                                                                                                                                                    |
-| `--disable_vite`                     | `FLIGHT_DISABLE_VITE`                | `false`          | **`true` / `1` / `yes`**: skip `vite build` and treat the process as **built-assets** mode (triggers SPA pipeline rules in production).                                                                         |
-| `--mode`                             | `FLIGHT_MODE`                        | `production`     | `development` spawns Vite; `production` enables production middleware.                                                                                                                                          |
-| _(n/a)_                              | `FLIGHT_DIST_PATH`                   | `../dist`        | Filesystem root for `koa-static` (relative to cwd **after** chdir to `app_home`).                                                                                                                               |
-| _(n/a)_                              | `FLIGHT_DISABLE_SPA_PIPELINE`        | _(unset)_        | **`1` / `true` / `yes`**: force **legacy** production stack (no in-router SPA fallback) while keeping `production` + `disable_vite`. Use for **API-only** workers or until duplicate app middleware is removed. |
-| _(n/a)_                              | `FLIGHT_STATIC_PREFIXES`             | `/assets,/fonts` | Baseline URL prefixes for **rate-limit skipping** on `GET`/`HEAD` (static hashed chunks).                                                                                                                       |
-| _(n/a)_                              | `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` | _(empty)_        | Extra prefixes merged with `FLIGHT_STATIC_PREFIXES` for the same skip list.                                                                                                                                     |
-| _(n/a)_                              | `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` | _(empty)_        | Limit **only** paths under these prefixes (comma-separated, for example `/api,/v1`). Empty means the limiter covers **every route**. Flight does not assume `/api`.                                             |
-| _(n/a)_                              | `FLIGHT_SPA_INDEX`                   | `index.html`     | SPA shell file inside the dist root for HTML fallback.                                                                                                                                                          |
-| _(n/a)_                              | `FLIGHT_SPA_DENY_PREFIXES`           | _(empty)_        | Extra prefixes that never get SPA fallback (merged with `/api`, `/health`).                                                                                                                                     |
-| _(n/a)_                              | `FLIGHT_TRUST_PROXY`                 | `false`          | **`1` / `true` / `yes`**: set **`app.proxy = true`** so `ctx.ip` / rate-limit id use **`X-Forwarded-For`** behind an L7 LB.                                                                                     |
-| _(n/a)_                              | `FLIGHT_HTTP_CACHE`                  | `false`          | **`1` / `true` / `yes`**: enable **`koa-cash`** in the **SPA pipeline** branch only (off by default there). Legacy branch always attaches `koa-cash`.                                                           |
-| _(n/a)_                              | `FLIGHT_REDIS_HOST`                  | `localhost`      | Redis for sessions, rate limit, and cache adapter.                                                                                                                                                              |
-| _(n/a)_                              | `FLIGHT_REDIS_PORT`                  | `6379`           | Redis port.                                                                                                                                                                                                     |
-| _(n/a)_                              | `FLIGHT_MAX_WORKERS`                 | CPU count        | Cap cluster worker count on small nodes.                                                                                                                                                                        |
+| Setting (CLI / argv)                 | Environment variable                 | Default                  | Use case                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------ | ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--exclude_paths`, `--exclude-paths` | `FLIGHT_EXCLUDE_PATHS`               | _(empty)_                | Skip subtrees when globbing `**/*.backend.ts` (monorepo vendor trees, fixtures). Nothing is excluded by default, so **`node_modules` is scanned**: a `*.backend.ts` inside a dependency is loaded, and can stop startup. Set `FLIGHT_EXCLUDE_PATHS=node_modules,dist` to skip them. Entries are paths under `app_home`. Bun defaults to `node_modules,dist`. |
+| `--app_home`                         | `FLIGHT_APP_HOME`                    | `.`                      | Repository root; `process.chdir` target before discovery and static paths.                                                                                                                                                                                                                                                                                   |
+| `--app_key`                          | `FLIGHT_APP_KEY`                     | `flightApp`              | Session cookie name.                                                                                                                                                                                                                                                                                                                                         |
+| `--app_secret`                       | `FLIGHT_APP_SECRET`                  | _(built-in placeholder)_ | Cookie signing secret(s); comma-separated for key rotation. The default is a public placeholder string in the source, so **always set this in production**.                                                                                                                                                                                                  |
+| _(argv)_                             | `FLIGHT_SESSION_DURATION_MS`         | `86400000`               | Session `maxAge` in ms.                                                                                                                                                                                                                                                                                                                                      |
+| `--port`                             | `FLIGHT_PORT`                        | `3000`                   | HTTP listen port (all modes).                                                                                                                                                                                                                                                                                                                                |
+| `--payload_limit`                    | `FLIGHT_PAYLOAD_LIMIT`               | `1mb`                    | `koa-bodyparser` JSON limit.                                                                                                                                                                                                                                                                                                                                 |
+| `--disable_vite`                     | `FLIGHT_DISABLE_VITE`                | `false`                  | **`true` / `1` / `yes`**: skip `vite build` and treat the process as **built-assets** mode (triggers SPA pipeline rules in production).                                                                                                                                                                                                                      |
+| `--mode`                             | `FLIGHT_MODE`                        | `production`             | `development` spawns Vite; `production` enables production middleware.                                                                                                                                                                                                                                                                                       |
+| _(n/a)_                              | `FLIGHT_DIST_PATH`                   | `../dist`                | Filesystem root for `koa-static`, resolved from the cwd **after** chdir to `app_home`. The default is the **parent** of `app_home`, so set `FLIGHT_DIST_PATH=dist` when `dist/` sits inside your app. Bun defaults to `<app home>/dist`.                                                                                                                     |
+| _(n/a)_                              | `FLIGHT_DISABLE_SPA_PIPELINE`        | _(unset)_                | **`1` / `true` / `yes`**: force **legacy** production stack (no in-router SPA fallback) while keeping `production` + `disable_vite`. Use for **API-only** workers or until duplicate app middleware is removed.                                                                                                                                              |
+| _(n/a)_                              | `FLIGHT_STATIC_PREFIXES`             | `/assets,/fonts`         | Baseline URL prefixes for **rate-limit skipping** on `GET`/`HEAD` (static hashed chunks).                                                                                                                                                                                                                                                                    |
+| _(n/a)_                              | `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` | _(empty)_                | Extra prefixes merged with `FLIGHT_STATIC_PREFIXES` for the same skip list.                                                                                                                                                                                                                                                                                  |
+| _(n/a)_                              | `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` | _(empty)_                | Limit **only** paths under these prefixes (comma-separated, for example `/api,/v1`). Empty means the limiter covers **every route**. Flight does not assume `/api`.                                                                                                                                                                                          |
+| _(n/a)_                              | `FLIGHT_SPA_INDEX`                   | `index.html`             | SPA shell file inside the dist root for HTML fallback.                                                                                                                                                                                                                                                                                                       |
+| _(n/a)_                              | `FLIGHT_SPA_DENY_PREFIXES`           | _(empty)_                | Extra prefixes that never get SPA fallback, merged with `/api` and `/health`. On Bun, setting this **replaces** the default list (`/api,/health,/healthz`).                                                                                                                                                                                                  |
+| _(n/a)_                              | `FLIGHT_TRUST_PROXY`                 | `false`                  | **`1` / `true` / `yes`**: set **`app.proxy = true`** so `ctx.ip` follows **`X-Forwarded-For`** behind an L7 LB. The Node rate limiter keys on the `X-Forwarded-For` header whenever it is present, whether or not this is set (see [Rate limiting](#rate-limiting)).                                                                                         |
+| _(n/a)_                              | `FLIGHT_HTTP_CACHE`                  | `false`                  | **`1` / `true` / `yes`**: enable **`koa-cash`** in the **SPA pipeline** branch only (off by default there). Legacy branch always attaches `koa-cash`.                                                                                                                                                                                                        |
+| _(n/a)_                              | `FLIGHT_REDIS_HOST`                  | `localhost`              | Redis host for sessions and rate limiting (and the cache adapter). Node only: Bun uses `FLIGHT_REDIS_URL`.                                                                                                                                                                                                                                                   |
+| _(n/a)_                              | `FLIGHT_REDIS_PORT`                  | `6379`                   | Redis port. Node only.                                                                                                                                                                                                                                                                                                                                       |
+| _(n/a)_                              | `FLIGHT_MAX_WORKERS`                 | CPU count                | Cap the cluster worker count on small nodes. It cannot raise the count above the number of CPUs. Node only: Bun is a single process.                                                                                                                                                                                                                         |
 
 `1`, `true`, and `yes` are matched exactly. `TRUE` does not turn those settings on.
+
+**Node-only settings.** `FLIGHT_APP_KEY`, `FLIGHT_APP_SECRET`, `FLIGHT_SESSION_DURATION_MS`, `FLIGHT_DISABLE_VITE`, `FLIGHT_DISABLE_SPA_PIPELINE`, `FLIGHT_SPA_INDEX`, `FLIGHT_HTTP_CACHE`, `FLIGHT_REDIS_HOST`, `FLIGHT_REDIS_PORT`, `FLIGHT_MAX_WORKERS`, and the CLI flags above are read only by the `flight` binary. The Node server has a fixed rate limit of 1200 requests per client per 60 seconds, 24-hour sessions unless `FLIGHT_SESSION_DURATION_MS` is set, and always logs requests with `koa-logger`. `flight-bun` reads its own set of variables, listed under [Bun runtime](#bun-runtime). Both runtimes read `FLIGHT_MODE`, `FLIGHT_PORT`, `FLIGHT_APP_HOME`, `FLIGHT_DIST_PATH`, `FLIGHT_EXCLUDE_PATHS`, `FLIGHT_PAYLOAD_LIMIT`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_STATIC_PREFIXES`, `FLIGHT_TRUST_PROXY`, and the `FLIGHT_RATE_LIMIT_*_PREFIXES` variables.
 
 Example `.env` fragment:
 
@@ -242,9 +252,9 @@ FLIGHT_TRUST_PROXY=1
 ```
 my-app/
 ├── components/
-│   └── Hello/
-│       ├── Hello.vue          # Vue UI (example)
-│       └── Hello.backend.ts   # Koa routes for this component
+│   └── hello/
+│       ├── Index.vue          # Vue UI (example)
+│       └── Index.backend.ts   # Koa routes for this component
 ├── assets/
 ├── dist/                      # Production build output
 └── package.json
@@ -372,7 +382,7 @@ Use the same **`npx flight --mode development`** / **`--mode production`** flow 
 
 **Load balancers and `X-Forwarded-For`**
 
-- Set **`FLIGHT_TRUST_PROXY=1`** when Flight sits behind a trusted reverse proxy so **`ctx.ip`** and the rate limiter’s **`id`** reflect the client. Configure your proxy to append **one** well-formed **`X-Forwarded-For`** chain.
+- Set **`FLIGHT_TRUST_PROXY=1`** when Flight sits behind a trusted reverse proxy so **`ctx.ip`** reflects the client. Configure your proxy to overwrite or append **one** well-formed **`X-Forwarded-For`** chain. The Node rate limiter identifies a client by the whole `X-Forwarded-For` header value when the request has one, and by `ctx.ip` otherwise. It does not look at `FLIGHT_TRUST_PROXY`, so a proxy must set that header, or a client can send its own and choose its own rate-limit bucket.
 - Sessions use cookies (`sameSite: true` in code today); sticky sessions or shared Redis are operational choices outside Flight’s defaults.
 
 ### Middleware order (mermaid)
@@ -395,7 +405,7 @@ flowchart TD
 
 ### Rate limiting
 
-The Node limiter is a production-only, Redis-backed **`koa-ratelimit`** (1200 requests per client per 60 seconds). It is mounted before the router, so it covers every request, including requests that your routes answer.
+The Node limiter is a production-only, Redis-backed **`koa-ratelimit`**. The limit is fixed at 1200 requests per client per 60 seconds and has no environment variable. Counters live in Redis, so cluster workers and replicas that share a Redis share a window. Responses carry `Rate-Limit-Total`, `Rate-Limit-Remaining`, and `Rate-Limit-Reset` headers, and a request over the limit gets `429` with `Retry-After` and the body `Sometimes You Just Have to Slow Down.` The limiter is mounted before the router, so it covers every request, including requests that your routes answer. A client is identified by its `X-Forwarded-For` header when present, otherwise by `ctx.ip`.
 
 **By default the limiter applies to every route.** Flight does not assume an `/api` prefix. Two environment variables change the scope. Both take comma-separated URL path prefixes:
 
@@ -407,7 +417,7 @@ The Node limiter is a production-only, Redis-backed **`koa-ratelimit`** (1200 re
 
 When an include list is set, the exclude and static lists still apply to the paths inside it. Counters are shared across cluster workers through Redis.
 
-An earlier 3.0.x release mounted the limiter after the router, so routes your router answered were never counted, and only unmatched requests were. From 3.0.2 they are counted and get a `429` once the limit is exceeded.
+Before 3.0.2 the limiter was mounted after the router, in every tagged release back to 1.0.7. Routes your router answered, including every `/api` route, were never counted, and only unmatched requests were. From 3.0.2 they are counted and get a `429` once the limit is exceeded. See [Upgrading to 3.x](#upgrading-to-3x).
 
 ### Migrating from Flight 1.x
 
@@ -416,6 +426,30 @@ An earlier 3.0.x release mounted the limiter after the router, so routes your ro
 3. Expect **`koa-cash` off** in the SPA pipeline unless you opt in with **`FLIGHT_HTTP_CACHE`**.
 
 See **[CHANGELOG.md](CHANGELOG.md)** for the full **2.0.0** notes.
+
+### Upgrading to 3.x
+
+Full notes are in **[CHANGELOG.md](CHANGELOG.md)**. What to check, in order:
+
+**From 2.x to 3.0.0**
+
+- **Node.js** `^20.19.0` or `>=22.12.0` (older Node versions are no longer supported).
+- **Vite 8.** Flight ships `vite` `^8.3.2` with `@vitejs/plugin-react` 6, `@vitejs/plugin-vue` 6, and `vite-plugin-vuetify` 2. Apps that still use Vite 6 should stay on `@thoughtpivot/flight@2.0.2` until they upgrade. Set `"type": "module"` in your app, or use a `.mts` Vite config.
+- **`ioredis` 6.** This matters if your own code creates an `ioredis` client: ioredis 6 needs Node 20 and, per the 3.0.0 changelog, speaks RESP3 by default, so set `protocol: 2` on your client if its server needs the older protocol. Flight's own client takes only `FLIGHT_REDIS_HOST` and `FLIGHT_REDIS_PORT`.
+- **New:** the Bun runtime (`flight-bun`), described below.
+
+**3.0.1**
+
+- Koa streaming and server-sent events work on `flight-bun`, and `FLIGHT_IDLE_TIMEOUT` exists. See [Streaming and server-sent events](#bun-runtime).
+- The package license changed from **MIT** (3.0.0 and earlier) to **Apache-2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+**3.0.2: the Node rate limiter now covers matched routes**
+
+- The limiter used to run after the router, so only unmatched requests were counted and matched routes were never limited. It now runs **before** the router in both production stacks. Behavior you may notice after upgrading:
+    - A client above 1200 requests per minute on routes your router answers, `/api` routes included, now gets `429`.
+    - Static files and SPA pages outside `FLIGHT_STATIC_PREFIXES` (for example `/favicon.ico` or a deep link) count against the same budget. `GET` and `HEAD` under `FLIGHT_STATIC_PREFIXES` and `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` stay exempt.
+    - The limit itself is not configurable on Node. To keep some routes unlimited, scope the limiter with `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES`. Its default, empty, limits every route. Flight does not assume `/api`.
+- `flight-bun` was not affected: its limiter always wrapped every route. It also accepts `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES`.
 
 ## Bun runtime
 
@@ -431,7 +465,9 @@ From a clone of this repo:
 FLIGHT_MODE=development bun src/bun/server.ts
 ```
 
-`npm run test:bun` runs the Bun suite. `npm test` stays the Node suite.
+`npm run test:bun` runs the Bun suite and `npm test` runs the Node suite. The Bun suite expects Redis on `127.0.0.1:6379` for its session test (CI provides it).
+
+`flight-bun` is configured only through environment variables. It does not read the Node CLI flags (`--mode`, `--port`, and so on). On Bun, a `.env` file in the working directory is loaded by Bun itself, not by Flight.
 
 The Bun server uses `Bun.serve` and loads TypeScript directly. It exposes `GET /healthz` and the same edge jobs as the Node server (logging, security headers, CORS, gzip, rate limit, sessions, response cache) without Koa packages on the native path. Redis is optional (`FLIGHT_REDIS_URL`); without it, sessions and cache use memory.
 
@@ -462,36 +498,64 @@ Existing Koa files keep working. `export default router.routes()` is mounted thr
 
 In development (`FLIGHT_MODE=development`) the API stays on `FLIGHT_PORT` (default 3000) and Vite is spawned on 3001. In production the built SPA is read from `FLIGHT_DIST_PATH` (default `<app home>/dist`) with an `index.html` fallback. `/api`, `/health`, and `/healthz` do not fall back.
 
-| Variable                             | Default          | Bun runtime                                                                                                                                                                                       |
-| ------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FLIGHT_SESSION_SECRET`              | unset            | Sessions stay **off** until this is set. There is no baked-in secret.                                                                                                                             |
-| `FLIGHT_RATE_LIMIT_MAX`              | `0`              | Rate limit stays **off** until this is greater than zero.                                                                                                                                         |
-| `FLIGHT_TRUST_PROXY`                 | false            | When `1` / `true` / `yes`, the limiter uses `X-Forwarded-For`. Otherwise that header is ignored.                                                                                                  |
-| `FLIGHT_REDIS_URL`                   | unset            | `redis://host:6379` for shared sessions and cache.                                                                                                                                                |
-| `FLIGHT_CACHE_ENABLED`               | false            | Cache GET responses that send `Cache-Control: max-age`.                                                                                                                                           |
-| `FLIGHT_STATIC_PREFIXES`             | `/assets,/fonts` | GET/HEAD under these prefixes skip the rate limit.                                                                                                                                                |
-| `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` | _(empty)_        | Limit only paths under these prefixes. Empty limits every route, including Bun-native and Koa routes. Flight does not assume `/api`.                                                              |
-| `FLIGHT_IDLE_TIMEOUT`                | `10`             | Idle seconds before Bun closes a socket. Explicit `0` disables it. Fractions round up to at least 1. Negative or invalid values use `10`. Above `255` is clamped. SSE turns this off per request. |
+**Bun environment variables.** Every variable `flight-bun` reads:
 
-The Bun limiter sits in front of every route by default, with the same scope variables as the Node server (`FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES`, `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES`, `FLIGHT_STATIC_PREFIXES`).
+| Variable                             | Default                                  | Effect                                                                                                                                                                                            |
+| ------------------------------------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FLIGHT_MODE`                        | `production`                             | `development` spawns Vite on 3001 (`bunx vite`). `production` serves the built SPA.                                                                                                               |
+| `FLIGHT_PORT`                        | `3000`                                   | HTTP listen port.                                                                                                                                                                                 |
+| `FLIGHT_HOSTNAME`                    | `0.0.0.0`                                | Interface to bind. Bun only.                                                                                                                                                                      |
+| `FLIGHT_APP_HOME`                    | `.`                                      | App root scanned for `*.backend.ts` and `*.backend.js`.                                                                                                                                           |
+| `FLIGHT_DIST_PATH`                   | `<app home>/dist`                        | Built SPA root (production).                                                                                                                                                                      |
+| `FLIGHT_EXCLUDE_PATHS`               | `node_modules,dist`                      | Top-level directories under the app root to skip during discovery. Setting it **replaces** the default list, and only the first path segment is matched.                                          |
+| `FLIGHT_SPA_DENY_PREFIXES`           | `/api,/health,/healthz`                  | Prefixes that never get the SPA fallback. Setting it **replaces** the default list, so include `/api` again if you still want it.                                                                 |
+| `FLIGHT_PAYLOAD_LIMIT`               | `1mb`                                    | `koa-bodyparser` JSON limit for Koa backends. Bun-native handlers read the body themselves.                                                                                                       |
+| `FLIGHT_LOGGING`                     | `false` (`true` in development)          | Log `METHOD path status ms` for each request.                                                                                                                                                     |
+| `FLIGHT_IDLE_TIMEOUT`                | `10`                                     | Idle seconds before Bun closes a socket. Explicit `0` disables it. Fractions round up to at least 1. Negative or invalid values use `10`. Above `255` is clamped. SSE turns this off per request. |
+| `FLIGHT_REDIS_URL`                   | unset                                    | `redis://host:6379` for shared sessions and cache. Unset means in-memory stores. The rate limiter never uses Redis.                                                                               |
+| `FLIGHT_CORS_ENABLED`                | `true`                                   | CORS headers and `OPTIONS` preflight.                                                                                                                                                             |
+| `FLIGHT_CORS_ORIGIN`                 | `*`                                      | `Access-Control-Allow-Origin`. With credentials on and `*`, the request origin is echoed.                                                                                                         |
+| `FLIGHT_CORS_METHODS`                | `GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS` | `Access-Control-Allow-Methods`.                                                                                                                                                                   |
+| `FLIGHT_CORS_HEADERS`                | _(empty)_                                | `Access-Control-Allow-Headers`. Empty echoes the request's `Access-Control-Request-Headers`, or `*`.                                                                                              |
+| `FLIGHT_CORS_CREDENTIALS`            | `false`                                  | Send `Access-Control-Allow-Credentials: true`.                                                                                                                                                    |
+| `FLIGHT_CORS_MAX_AGE`                | `86400`                                  | `Access-Control-Max-Age` seconds.                                                                                                                                                                 |
+| `FLIGHT_SECURITY_ENABLED`            | `true`                                   | Helmet-style security headers. No `Content-Security-Policy` is set because a wrong policy breaks the SPA.                                                                                         |
+| `FLIGHT_HSTS`                        | `false`                                  | Add `Strict-Transport-Security` (with `includeSubDomains`).                                                                                                                                       |
+| `FLIGHT_HSTS_MAX_AGE`                | `15552000`                               | HSTS `max-age` in seconds.                                                                                                                                                                        |
+| `FLIGHT_COMPRESS_ENABLED`            | `true`                                   | Gzip text and JSON responses. Event streams and other streaming bodies are never compressed.                                                                                                      |
+| `FLIGHT_COMPRESS_THRESHOLD`          | `1024`                                   | Smallest body, in bytes, that is gzipped.                                                                                                                                                         |
+| `FLIGHT_RATE_LIMIT_MAX`              | `0`                                      | Requests allowed per client per window. The limiter stays **off** until this is greater than zero.                                                                                                |
+| `FLIGHT_RATE_LIMIT_DISABLE`          | `false`                                  | `1` / `true` / `yes` turns the limiter off even when `FLIGHT_RATE_LIMIT_MAX` is set.                                                                                                              |
+| `FLIGHT_RATE_LIMIT_DURATION_MS`      | `60000`                                  | Window length in milliseconds.                                                                                                                                                                    |
+| `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` | _(empty)_                                | Limit only paths under these prefixes. Empty limits every route, Bun-native and Koa. Flight does not assume `/api`.                                                                               |
+| `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` | _(empty)_                                | Extra prefixes, merged with `FLIGHT_STATIC_PREFIXES`, whose `GET` and `HEAD` requests are never counted.                                                                                          |
+| `FLIGHT_STATIC_PREFIXES`             | `/assets,/fonts`                         | `GET` and `HEAD` under these prefixes skip the rate limit.                                                                                                                                        |
+| `FLIGHT_TRUST_PROXY`                 | `false`                                  | When `1` / `true` / `yes`, the limiter identifies clients by `X-Forwarded-For` (first entry), then `X-Real-IP`. Otherwise those headers are ignored and the peer address is used.                 |
+| `FLIGHT_SESSION_SECRET`              | unset                                    | Sessions stay **off** until this is set. There is no baked-in secret.                                                                                                                             |
+| `FLIGHT_SESSION_COOKIE`              | `flight.sid`                             | Session cookie name (the Node server uses `FLIGHT_APP_KEY`, default `flightApp`).                                                                                                                 |
+| `FLIGHT_SESSION_TTL`                 | `86400`                                  | Session lifetime in **seconds** (the Node server uses `FLIGHT_SESSION_DURATION_MS`, in milliseconds).                                                                                             |
+| `FLIGHT_CACHE_ENABLED`               | `false`                                  | Cache `GET` responses that send `Cache-Control: max-age`.                                                                                                                                         |
+| `FLIGHT_CACHE_MAX_TTL`               | `3600`                                   | Longest time, in seconds, a response is cached whatever its `max-age`.                                                                                                                            |
 
-Other `FLIGHT_*` knobs from the Node server (`FLIGHT_MODE`, `FLIGHT_PORT`, `FLIGHT_APP_HOME`, `FLIGHT_EXCLUDE_PATHS`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_PAYLOAD_LIMIT`) apply here too. `FLIGHT_MAX_WORKERS` does not: see the cluster note above. `GET /healthz` returns `ok` and is not rate limited.
+The Bun limiter sits in front of every route by default. A request over the limit gets `429` with `Retry-After`, and every counted response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.
+
+`GET /healthz` returns `ok`. It is answered before the other middleware, so it is not rate limited and carries no security, CORS, or compression handling. The Node server has no `/healthz` route. `FLIGHT_MAX_WORKERS` does not apply on Bun: see the cluster note above.
 
 ## Requirements
 
 - Node.js **`^20.19.0` or `>=22.12.0`** (the `flight` binary; matches Vite 8 / ioredis 6)
-- [Bun](https://bun.sh) 1.x (only for `flight-bun` / `npm run test:bun`)
-- **Redis** (sessions / rate limit / cache integrations on the Node server; optional for the Bun runtime)
-- **TypeScript** in your app if you author `.backend.ts` modules as TS
+- [Bun](https://bun.sh) 1.x (only for `flight-bun` / `npm run test:bun`). CI runs Bun 1.4.3, and 1.4.2 has been run against the suite too.
+- **Redis** (sessions, rate limit, and cache on the Node server, reached through `FLIGHT_REDIS_HOST` / `FLIGHT_REDIS_PORT`; optional on the Bun runtime, through `FLIGHT_REDIS_URL`, and never used by the Bun rate limiter)
+- **TypeScript** in your app if you author `.backend.ts` modules as TS. On Node older than 22.18, also a loader such as `tsx` (see [Loading `.backend.ts` files on Node](#loading-backendts-files-on-node)). Bun needs none.
 
 ## CI and npm publish
 
 GitHub Actions is the only CI/publish path:
 
-| Workflow                                                         | When                                                     | What it does                                                    |
-| ---------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------- |
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml)           | Pull requests and pushes to `main`                       | `npm ci`, `lint:check`, `npm test` on Node 20 and 22            |
-| [`.github/workflows/publish.yml`](.github/workflows/publish.yml) | GitHub Release published (or manual `workflow_dispatch`) | Re-runs checks, then `npm publish --access public --provenance` |
+| Workflow                                                         | When                                                     | What it does                                                                                                                                                                   |
+| ---------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml)           | Pull requests and pushes to `main`                       | `npm ci`, `lint:check`, `npm test` on Node 20 and 22, and `npm run test:bun` on Bun 1.4.3 with a Redis 7 service                                                               |
+| [`.github/workflows/publish.yml`](.github/workflows/publish.yml) | GitHub Release published (or manual `workflow_dispatch`) | On Node 22.14 with npm 11.5 or newer: `npm ci`, `lint:check`, `npm test`, a check that the release tag matches `package.json`, then `npm publish --access public --provenance` |
 
 ### One-time npm setup (Trusted Publishing)
 
@@ -506,7 +570,7 @@ Preferred: no long-lived npm token in GitHub.
     - **Environment name:** `npm` (must match the workflow `environment:`)
 4. In the GitHub repo, create an **Environment** named `npm` (Settings → Environments). Optional: require reviewers before publish.
 
-Fallback if Trusted Publishing is unavailable: add a repository or environment secret **`NPM_TOKEN`** (granular token with read/write to `@thoughtpivot/flight`). The publish workflow already passes it as `NODE_AUTH_TOKEN` when present.
+There is no token fallback. The publish step unsets `NODE_AUTH_TOKEN` and strips any `_authToken` from the npm config, because a classic or granular token overrides OIDC and fails with `EOTP`. An `NPM_TOKEN` secret is ignored. If publishing breaks, check the Trusted Publisher settings above. The publish job does not run the Bun suite; CI does that on every pull request.
 
 ### Cut a release
 
@@ -516,13 +580,15 @@ Fallback if Trusted Publishing is unavailable: add a repository or environment s
 
 Dry-run without publishing: Actions → **Publish** → **Run workflow** → leave **dry_run** checked.
 
+Only a published GitHub Release, or a manual run with **dry_run** unchecked, publishes to npm. Merging to `main`, docs-only changes included, never does. `README.md` and `CHANGELOG.md` ship in the package, so documentation changes reach npmjs.com with the next release.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Contributing
 
-Issues and pull requests are welcome. Flight improves fastest with real workloads—if you hit an edge case, open an issue with a minimal repro. Run `npm test` and `npm run lint:check` before opening a PR.
+Issues and pull requests are welcome. Flight improves fastest with real workloads—if you hit an edge case, open an issue with a minimal repro. Run `npm test` and `npm run lint:check` before opening a PR, and `npm run test:bun` as well when you touch `src/bun` (it needs Bun and a Redis on `127.0.0.1:6379`).
 
 ## Acknowledgments
 

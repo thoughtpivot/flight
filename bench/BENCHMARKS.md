@@ -31,7 +31,7 @@ Middleware is each runtime's shipped default for a non-dev, non-production mode:
 
 - Node: koa-logger (cannot be turned off; output went to /dev/null), session, CORS and bodyparser.
 - Bun: security headers, CORS and compression. No logging by default.
-- Neither side rate-limits.
+- Neither side rate-limits. Node's limiter is production-only, and 3.0.2 moved it ahead of the router, which does not change these non-production runs. The Bun limiter is off unless `FLIGHT_RATE_LIMIT_MAX` is set.
 
 ## Environment
 
@@ -80,7 +80,7 @@ Middleware is each runtime's shipped default for a non-dev, non-production mode:
 | Install, warm cache   | 3.82 s          | 0.28 s                 | 13.5x        |
 | TypeScript build step | `tsc` 3.52 s    | none (Bun runs the TS) | step removed |
 
-CI and the docs still run `npm ci`, even in the Bun CI job, so `bun install` is optional today. Flight's two test suites are different (30 Node tests vs 6 Bun tests), so they are not compared.
+CI and the docs still run `npm ci`, even in the Bun CI job, so `bun install` is optional today. Flight's two test suites are different (30 Node tests vs 6 Bun tests at the time; 37 and 16 as of 3.0.2), so they are not compared.
 
 ## Reproduce
 
