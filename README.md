@@ -6,7 +6,7 @@
 
 **Flight** is an application server for teams who want something **fast**, **boring in the good way**, and **ready for serious traffic**. You bring your own hosting—there is no lock-in to a proprietary edge or a single vendor’s deployment story. It fits **twelve-factor** style workflows: configuration via environment variables, horizontal scaling, and state kept where it belongs (for Flight, that includes **Redis** for sessions and cache-friendly layers).
 
-Think **platform-agnostic**: not framework-as-a-platform, but a clear runtime you can run wherever **Node** or **Bun** runs—VMs, Kubernetes, bare metal, your cloud of choice. The `flight` binary is the Node / Koa server. `flight-bun` is the Bun server (`Bun.serve`), and it can still mount existing Koa `router.routes()` backends while you move routes over. Flight is aimed at **hyperscale-friendly** designs (cluster workers on Node, a single Bun process with native TypeScript on the Bun path), **ephemeral** processes, and **component-shaped** backends so routes stay colocated with the features they serve. **Vue** and **React** are both supported through the same **Vite** dev and production flows (your app’s **`vite.config`** chooses the UI stack; Flight does not).
+Think **platform-agnostic**: not framework-as-a-platform, but a clear runtime you can run wherever **Node** or **Bun** runs—VMs, Kubernetes, bare metal, your cloud of choice. The `flight` binary is the Node / Koa server. `flight-bun` is the Bun server (`Bun.serve`), and it can still mount existing Koa `router.routes()` backends while you move routes over. Flight is aimed at **hyperscale-friendly** designs (cluster workers on Node, a single Bun process with native TypeScript on the Bun path), **ephemeral** processes, and **component-shaped** backends so routes stay colocated with the features they serve. **Vue** and **React** are both supported through the same **Vite** dev and production flows (your app’s **`vite.config`** chooses the UI stack; Flight does not). Vanilla JS/TS, Preact, Lit, Svelte, Solid, and Qwik work the same way and are covered by tests: see [UI frameworks](#ui-frameworks).
 
 Flight is **open source** from **[ThoughtPivot](https://github.com/thoughtpivot)**.
 
@@ -355,6 +355,65 @@ export default function App() {
 
 Use the same **`npx flight --mode development`** / **`--mode production`** flow as Vue. Production **`dist`**, **`FLIGHT_DISABLE_VITE`**, and the **Production SPA pipeline** behave the same for a Vite-built React SPA.
 
+## UI frameworks
+
+Flight does not choose a UI framework. It runs **`vite`** and **`vite build`** from your **`app_home`**, and your **`vite.config.*`** decides what builds. Flight 3 ships **Vite 8**, so a framework needs a plugin version that supports Vite 8. Vue and React are covered above. These six are covered by tests:
+
+| Framework                 | Install                                           | What it needs                                                   |
+| ------------------------- | ------------------------------------------------- | --------------------------------------------------------------- |
+| Vanilla JavaScript and TS | nothing                                           | Nothing. No plugin and no config.                               |
+| Preact                    | `preact`                                          | A tsconfig with `jsxImportSource: "preact"`. No plugin.         |
+| Lit                       | `lit`                                             | Plain classes: nothing. Decorators: `experimentalDecorators`.   |
+| Svelte                    | `svelte` `@sveltejs/vite-plugin-svelte`           | The plugin in `vite.config`.                                    |
+| Solid                     | `solid-js` `vite-plugin-solid`                    | The plugin in `vite.config`.                                    |
+| Qwik                      | `@qwik.dev/core` (Qwik 2, tested at `2.0.0-rc.5`) | `qwikVite({ csr: true })` in an ESM config (`vite.config.mts`). |
+
+Each framework has a minimal app in [`test/frameworks/fixtures/`](test/frameworks/fixtures). `npm run test:frameworks` starts the Node server on each one, lets Flight run `vite build`, and checks the page and its bundle. It then loads the page in headless Chrome and requires the expected markup with no console errors, page errors, failed requests, or HTTP error responses. It repeats the check against `flight-bun` serving the same build. CI runs it on every pull request. The tests cover the production build and serve path. They do not start the Vite dev server.
+
+**Vanilla JavaScript and TypeScript.** Point `index.html` at a module script, for example `<script type="module" src="/src/main.ts">`. Vite compiles TypeScript, and plain `.js` modules can be imported alongside it.
+
+**Preact.** Add a `tsconfig.json` so Vite compiles JSX for Preact:
+
+```json
+{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" } }
+```
+
+No Vite plugin is required for a build. Without `jsxImportSource` the build succeeds but the page does not render the component. `@preact/preset-vite` is optional and adds fast refresh in development; the fixture does not use it.
+
+**Lit.** Plain classes (`static properties` and `customElements.define`) need no configuration. For decorators (`@customElement`, `@property`), add a tsconfig with `"experimentalDecorators": true`, and `"useDefineForClassFields": false` as Lit recommends. Without `experimentalDecorators` the build still succeeds, but the page throws `Invalid or unexpected token` in the browser.
+
+**Svelte.** Install Svelte 5 and the plugin, then register it:
+
+```typescript
+import { svelte } from '@sveltejs/vite-plugin-svelte'
+
+export default { plugins: [svelte()] }
+```
+
+`<script lang="ts">` works without a `svelte.config.js`.
+
+**Solid.** `vite-plugin-solid` compiles Solid's JSX:
+
+```typescript
+import solid from 'vite-plugin-solid'
+
+export default { plugins: [solid()] }
+```
+
+No tsconfig is needed for the build. Add one with `"jsx": "preserve"` and `"jsxImportSource": "solid-js"` for editor types.
+
+**Qwik.** Use Qwik 2 (`@qwik.dev/core`), which targets Vite 8. It is currently a release candidate on npm. Flight serves static files, so build Qwik in client-only mode:
+
+```typescript
+import { qwikVite } from '@qwik.dev/core/optimizer'
+
+export default { plugins: [qwikVite({ csr: true })] }
+```
+
+- **`csr: true` is required.** Qwik's default config expects a server-rendered layout and fails with `Qwik input .../src/root not found`.
+- **The config must be ESM.** Name it `vite.config.mts`, or set `"type": "module"` in your `package.json`. As `vite.config.ts` in a CommonJS package, Vite fails with `This package is ESM only but it was tried to load by require`.
+- **Qwik 1.x** (`@builder.io/qwik`) declares `vite >=5 <8`. In an app that does not depend on `vite` itself, npm installs Vite 7 at the app root for Qwik and keeps Flight's Vite 8 nested, so Flight's `npx vite build` runs on **Vite 7**. A manual check of Flight building and serving a Qwik 1 app that way worked. If your app pins Vite 8, npm stops with `ERESOLVE` unless you add `"overrides": { "@builder.io/qwik": { "vite": "$vite" } }` to your `package.json`. Qwik 1 is not part of the automated tests.
+
 ## Development mode
 
 - **Vite** with HMR on port **3001** for **Vue or React** (whatever your `vite.config` configures)
@@ -552,10 +611,10 @@ The Bun limiter sits in front of every route by default. A request over the limi
 
 GitHub Actions is the only CI/publish path:
 
-| Workflow                                                         | When                                                     | What it does                                                                                                                                                                   |
-| ---------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`.github/workflows/ci.yml`](.github/workflows/ci.yml)           | Pull requests and pushes to `main`                       | `npm ci`, `lint:check`, `npm test` on Node 20 and 22, and `npm run test:bun` on Bun 1.4.3 with a Redis 7 service                                                               |
-| [`.github/workflows/publish.yml`](.github/workflows/publish.yml) | GitHub Release published (or manual `workflow_dispatch`) | On Node 22.14 with npm 11.5 or newer: `npm ci`, `lint:check`, `npm test`, a check that the release tag matches `package.json`, then `npm publish --access public --provenance` |
+| Workflow                                                         | When                                                     | What it does                                                                                                                                                                                               |
+| ---------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml)           | Pull requests and pushes to `main`                       | `npm ci`, `lint:check`, `npm test` on Node 20 and 22, `npm run test:bun` on Bun 1.4.3 with a Redis 7 service, and `npm run test:frameworks` (the framework fixtures in headless Chrome) with Redis and Bun |
+| [`.github/workflows/publish.yml`](.github/workflows/publish.yml) | GitHub Release published (or manual `workflow_dispatch`) | On Node 22.14 with npm 11.5 or newer: `npm ci`, `lint:check`, `npm test`, a check that the release tag matches `package.json`, then `npm publish --access public --provenance`                             |
 
 ### One-time npm setup (Trusted Publishing)
 
@@ -588,7 +647,7 @@ Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## Contributing
 
-Issues and pull requests are welcome. Flight improves fastest with real workloads—if you hit an edge case, open an issue with a minimal repro. Run `npm test` and `npm run lint:check` before opening a PR, and `npm run test:bun` as well when you touch `src/bun` (it needs Bun and a Redis on `127.0.0.1:6379`).
+Issues and pull requests are welcome. Flight improves fastest with real workloads—if you hit an edge case, open an issue with a minimal repro. Run `npm test` and `npm run lint:check` before opening a PR, and `npm run test:bun` as well when you touch `src/bun` (it needs Bun and a Redis on `127.0.0.1:6379`). `npm run test:frameworks` builds and loads the framework fixtures. It needs Node 22.18 or newer (it runs TypeScript test files directly), Bun, Redis, and Chrome or Chromium. Set `FLIGHT_TEST_CHROME` to the browser path if it is not in a standard location.
 
 ## Acknowledgments
 
