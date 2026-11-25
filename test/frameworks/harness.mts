@@ -10,11 +10,18 @@ import puppeteer, { type Browser } from 'puppeteer-core'
 export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 export const FIXTURES_DIR = join(REPO_ROOT, 'test', 'frameworks', 'fixtures')
 
-/** A running Flight server and the output it has printed so far. */
+/** A running Flight server and the output it has printed so far, without ANSI colour codes. */
 export interface ServerHandle {
     url: string
     output(): string
     stop(): Promise<void>
+}
+
+/**
+ * Remove ANSI colour codes. Vite colours its output on CI, which splits phrases such as `vite v8.3.2 building`.
+ */
+function stripAnsi(text: string): string {
+    return text.replace(/\u001b\[[0-9;]*m/g, '')
 }
 
 /** Ask the OS for a free TCP port. */
@@ -48,7 +55,7 @@ async function spawnServer(command: string, args: string[], env: Record<string, 
 
     return {
         url: `http://127.0.0.1:${port}`,
-        output: () => output,
+        output: () => stripAnsi(output),
         async stop() {
             if (exited || child.pid === undefined) return
             const done = new Promise<void>((resolve) => child.once('exit', () => resolve()))
