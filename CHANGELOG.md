@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+### Tests
+
+- **Framework fixtures.** A minimal app for Vanilla JS/TS, Preact, Lit (plain classes and decorators), Svelte, Solid, and Qwik lives in `test/frameworks/fixtures/`. `npm run test:frameworks` starts the Node server on each one so Flight runs `vite build`, requests the page and its bundle, and loads it in headless Chrome. It requires the expected markup and no console errors, page errors, failed requests, or HTTP error responses, then repeats the check with `flight-bun` serving the same build. A new `Test (Frameworks)` CI job runs it with Redis and Bun.
+- New devDependencies for the fixtures and the browser driver: `preact`, `lit`, `svelte`, `@sveltejs/vite-plugin-svelte`, `solid-js`, `vite-plugin-solid`, `@qwik.dev/core` (pinned to `2.0.0-rc.5`), and `puppeteer-core`. Nothing is added to the published package's dependencies.
+
 ### Documentation
 
+- New README section, **UI frameworks**, with what each of those six needs: no plugin for Vanilla and Preact (Preact needs a tsconfig `jsxImportSource`), a tsconfig for Lit decorators, the Vite plugin for Svelte and Solid, and `qwikVite({ csr: true })` in an ESM config for Qwik 2. It also records that Qwik 1 runs on a hoisted Vite 7 unless the app overrides the peer range.
 - README brought up to date with 3.0.2. Every environment variable that `flight` and `flight-bun` read is now documented, including 18 that were missing (the Bun CORS, security, compression, session, cache, logging, and rate-limit settings, plus `FLIGHT_HOSTNAME`). The Node and Bun tables say which runtime reads what, and where the same name behaves differently (`FLIGHT_EXCLUDE_PATHS`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_DIST_PATH`, the session cookie and lifetime settings).
 - New README sections: loading `.backend.ts` files on Node (a loader is needed before Node 22.18 once a file uses TypeScript-only syntax), and **Upgrading to 3.x**, which covers 3.0.0, 3.0.1, and the 3.0.2 rate-limit change.
 - Corrected: the Node `FLIGHT_APP_SECRET` default is a public placeholder, so set it in production. The Node `FLIGHT_DIST_PATH` default is `../dist`, the parent of `app_home`. The Node rate limiter keys on the `X-Forwarded-For` header whenever it is present, whether or not `FLIGHT_TRUST_PROXY` is set. The publish workflow does not use `NPM_TOKEN`. CI also runs the Bun suite. The SPA pipeline is Option B throughout.
