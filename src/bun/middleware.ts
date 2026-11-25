@@ -217,12 +217,22 @@ function shouldSkip(pathname: string, method: string, prefixes: string[]): boole
 }
 
 /**
- * Fixed-window rate limit. Hashed static prefixes are skipped so assets do not burn the API budget.
+ * True when the path is outside every include prefix. No include prefixes means every path is limited.
+ */
+function outsideScope(pathname: string, prefixes: string[] | undefined): boolean {
+    if (!prefixes || prefixes.length === 0) return false
+    return !prefixes.some((prefix) => prefix === '/' || pathname === prefix || pathname.startsWith(`${prefix}/`))
+}
+
+/**
+ * Fixed-window rate limit over every route by default. `includePrefixes` narrows it to those paths.
+ * Hashed static prefixes are skipped so assets do not burn the API budget.
  */
 export function rateLimit(cfg: RateLimitConfig, addressOf: (req: Request) => string): Middleware {
     const windows = new Map<string, { count: number; resetAt: number }>()
     return async (req, next) => {
         const pathname = new URL(req.url).pathname
+        if (outsideScope(pathname, cfg.includePrefixes)) return next()
         if (shouldSkip(pathname, req.method, cfg.skipPrefixes)) return next()
 
         const now = Date.now()

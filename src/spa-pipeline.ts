@@ -109,12 +109,52 @@ export function shouldSkipRateLimitForPath(path: string, method: string, prefixe
     return prefixes.some((pre) => path === pre || path.startsWith(`${pre}/`))
 }
 
-/** Same ratelimit as Flight legacy, but skips GET/HEAD under configured prefixes (e.g. hashed assets). */
-export function ratelimitWithPrefixSkips(redis: Redis, skipPrefixes: string[]): Middleware {
+/** True when `path` is `prefix` or a child of it. */
+function underPrefix(path: string, prefix: string): boolean {
+    if (prefix === '/') return true
+    return path === prefix || path.startsWith(`${prefix}/`)
+}
+
+/**
+ * Whether the limiter applies to this request.
+ * With no `includePrefixes` (the default) every route is limited. When include prefixes are set,
+ * only paths under them are limited. `skipPrefixes` then removes GET/HEAD requests, such as hashed assets.
+ */
+export function shouldRateLimitPath(
+    path: string,
+    method: string,
+    skipPrefixes: string[],
+    includePrefixes: string[] = []
+): boolean {
+    if (includePrefixes.length > 0 && !includePrefixes.some((pre) => underPrefix(path, pre))) return false
+    return !shouldSkipRateLimitForPath(path, method, skipPrefixes)
+}
+
+/** Optional scope and tuning for `ratelimitWithPrefixSkips`. Defaults match Flight's production limiter. */
+export interface RateLimitOptions {
+    /** Limit only paths under these prefixes. Empty (the default) limits every route. */
+    includePrefixes?: string[]
+    /** Requests allowed per window. Default 1200. */
+    max?: number
+    /** Window in milliseconds. Default 60000. */
+    duration?: number
+}
+
+/**
+ * Flight's production limiter, scoped by path.
+ * Every route is limited unless `includePrefixes` narrows it, and GET/HEAD under `skipPrefixes` are never counted.
+ * Pass a `Map` instead of Redis for an in-memory store (used by tests).
+ */
+export function ratelimitWithPrefixSkips(
+    db: Redis | Map<string, unknown>,
+    skipPrefixes: string[],
+    options: RateLimitOptions = {}
+): Middleware {
+    const includePrefixes = options.includePrefixes ?? []
     const inner = ratelimit({
-        driver: 'redis',
-        db: redis,
-        duration: 60000,
+        driver: db instanceof Map ? 'memory' : 'redis',
+        db: db as never,
+        duration: options.duration ?? 60000,
         errorMessage: 'Sometimes You Just Have to Slow Down.',
         id: (ctx) => ctx.get('x-forwarded-for') || ctx.ip,
         headers: {
@@ -122,16 +162,30 @@ export function ratelimitWithPrefixSkips(redis: Redis, skipPrefixes: string[]): 
             reset: 'Rate-Limit-Reset',
             total: 'Rate-Limit-Total'
         },
-        max: 1200,
+        max: options.max ?? 1200,
         disableHeader: false
     })
 
     return async (ctx: Context, next: Next) => {
-        if (shouldSkipRateLimitForPath(ctx.path, ctx.method, skipPrefixes)) {
+        if (!shouldRateLimitPath(ctx.path, ctx.method, skipPrefixes, includePrefixes)) {
             return next()
         }
         await inner(ctx, next)
     }
+}
+
+/**
+ * Mount the router. A limiter is mounted first so it runs for every request, including matched routes.
+ * A router that answers without calling `next()` would otherwise hide the request from a later limiter.
+ */
+export function mountRouter(
+    app: { use(middleware: Middleware): unknown },
+    router: { routes(): Middleware; allowedMethods(): Middleware },
+    limiter?: Middleware | null
+): void {
+    if (limiter) app.use(limiter)
+    app.use(router.routes())
+    app.use(router.allowedMethods())
 }
 
 export function httpCacheEnabledInSpaPipeline(env: NodeJS.ProcessEnv = process.env): boolean {

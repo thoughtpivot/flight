@@ -176,8 +176,8 @@ The Node server picks **`mode`** as: **`FLIGHT_MODE`** (if set and non-empty), e
 
 **Edge cases**
 
-- **`production` + `disable_vite` false**: Vite build still runs; **legacy** middleware order applies (`compress` → `ratelimit` → `koa-cash` → static), because built-assets-only mode is off.
-- **`production` + `disable_vite` true + `FLIGHT_DISABLE_SPA_PIPELINE`**: **Legacy** stack only—no SPA HTML fallback for unknown GETs; tail `koa-static` only after compress/ratelimit/cache.
+- **`production` + `disable_vite` false**: Vite build still runs; **legacy** middleware order applies (`ratelimit` → router → `compress` → `koa-cash` → static), because built-assets-only mode is off.
+- **`production` + `disable_vite` true + `FLIGHT_DISABLE_SPA_PIPELINE`**: **Legacy** stack only—no SPA HTML fallback for unknown GETs; tail `koa-static` only after compress/cache.
 - **`development`**: unchanged—Redis session store and production-only static/SPA branches do not apply the SPA pipeline section (the dev Vite server owns UI URLs).
 
 ## Configuration: CLI, `.env`, and environment variables
@@ -207,6 +207,7 @@ Flight loads a **`.env`** file from the **current working directory** at startup
 | _(n/a)_                              | `FLIGHT_DISABLE_SPA_PIPELINE`        | _(unset)_        | **`1` / `true` / `yes`**: force **legacy** production stack (no in-router SPA fallback) while keeping `production` + `disable_vite`. Use for **API-only** workers or until duplicate app middleware is removed. |
 | _(n/a)_                              | `FLIGHT_STATIC_PREFIXES`             | `/assets,/fonts` | Baseline URL prefixes for **rate-limit skipping** on `GET`/`HEAD` (static hashed chunks).                                                                                                                       |
 | _(n/a)_                              | `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` | _(empty)_        | Extra prefixes merged with `FLIGHT_STATIC_PREFIXES` for the same skip list.                                                                                                                                     |
+| _(n/a)_                              | `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` | _(empty)_        | Limit **only** paths under these prefixes (comma-separated, for example `/api,/v1`). Empty means the limiter covers **every route**. Flight does not assume `/api`.                                             |
 | _(n/a)_                              | `FLIGHT_SPA_INDEX`                   | `index.html`     | SPA shell file inside the dist root for HTML fallback.                                                                                                                                                          |
 | _(n/a)_                              | `FLIGHT_SPA_DENY_PREFIXES`           | _(empty)_        | Extra prefixes that never get SPA fallback (merged with `/api`, `/health`).                                                                                                                                     |
 | _(n/a)_                              | `FLIGHT_TRUST_PROXY`                 | `false`          | **`1` / `true` / `yes`**: set **`app.proxy = true`** so `ctx.ip` / rate-limit id use **`X-Forwarded-For`** behind an L7 LB.                                                                                     |
@@ -361,7 +362,7 @@ Use the same **`npx flight --mode development`** / **`--mode production`** flow 
 
 **When it is on (option B):** `mode === 'production'` **and** **`disable_vite === true`** **and** **`FLIGHT_DISABLE_SPA_PIPELINE` is not truthy.**
 
-**What it does:** After your **`router`** (all `**/*.backend.ts` routes), Flight serves **`FLIGHT_DIST_PATH`** with **`koa-static`**, then applies an **`index.html`** fallback for typical browser navigations (see tests in `src/spa-pipeline.test.ts` for the behavioral contract). Only then runs **`koa-compress`**, Redis **`koa-ratelimit`** (with **`GET`/`HEAD` skipped** under `FLIGHT_STATIC_PREFIXES` ∪ `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES`), and optionally **`koa-cash`** when **`FLIGHT_HTTP_CACHE`** is enabled.
+**What it does:** After your **`router`** (all `**/*.backend.ts` routes), Flight serves **`FLIGHT_DIST_PATH`** with **`koa-static`**, then applies an **`index.html`** fallback for typical browser navigations (see tests in `src/spa-pipeline.test.ts` for the behavioral contract). Then it runs **`koa-compress`**, and optionally **`koa-cash`** when **`FLIGHT_HTTP_CACHE`** is enabled. The Redis **`koa-ratelimit`** limiter is mounted **before** the router, so it counts every request, including requests your router answers. See [Rate limiting](#rate-limiting).
 
 **Path ownership**
 
@@ -380,21 +381,37 @@ Use the same **`npx flight --mode development`** / **`--mode production`** flow 
 
 ```mermaid
 flowchart TD
-  A[cors + bodyparser + session] --> B[router + *.backend.ts]
+  A[cors + bodyparser + session] --> L[koa-ratelimit with prefix scope and skips]
+  L --> B[router + *.backend.ts]
   B --> C[koa-static dist]
   C --> D[SPA index.html fallback]
   D --> E[koa-compress]
-  E --> F[koa-ratelimit with prefix skips]
-  F --> G{koa-cash}
+  E --> G{koa-cash}
   G -->|FLIGHT_HTTP_CACHE on| H[Redis-backed cache]
   G -->|default| I[no cache middleware]
 ```
 
-**Legacy production stack** (`disable_vite` false, or **`FLIGHT_DISABLE_SPA_PIPELINE`** set): `router` → **`compress`** → **`ratelimit`** → **`koa-cash`** → **`koa-static`**.
+**Legacy production stack** (`disable_vite` false, or **`FLIGHT_DISABLE_SPA_PIPELINE`** set): **`ratelimit`** → `router` → **`compress`** → **`koa-cash`** → **`koa-static`**.
+
+### Rate limiting
+
+The Node limiter is a production-only, Redis-backed **`koa-ratelimit`** (1200 requests per client per 60 seconds). It is mounted before the router, so it covers every request, including requests that your routes answer.
+
+**By default the limiter applies to every route.** Flight does not assume an `/api` prefix. Two environment variables change the scope. Both take comma-separated URL path prefixes:
+
+| Variable                             | Default          | Effect                                                                                                                                                       |
+| ------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` | _(empty)_        | Limit only paths equal to or under these prefixes. Empty limits every route. For example, `/api` limits `/api` and `/api/orders` and leaves `/orders` alone. |
+| `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` | _(empty)_        | `GET` and `HEAD` under these prefixes (merged with `FLIGHT_STATIC_PREFIXES`) are never counted. Applies to the SPA pipeline.                                 |
+| `FLIGHT_STATIC_PREFIXES`             | `/assets,/fonts` | `GET` and `HEAD` under these prefixes are never counted, so hashed static files do not use the budget. Applies to the SPA pipeline.                          |
+
+When an include list is set, the exclude and static lists still apply to the paths inside it. Counters are shared across cluster workers through Redis.
+
+An earlier 3.0.x release mounted the limiter after the router, so routes your router answered were never counted, and only unmatched requests were. From 3.0.2 they are counted and get a `429` once the limit is exceeded.
 
 ### Migrating from Flight 1.x
 
-1. If you rely on the **old** order (everything after `router` saw compress/ratelimit/cache **before** static), set **`FLIGHT_DISABLE_SPA_PIPELINE=1`** until you validate the new behavior.
+1. If you rely on the **old** order (everything after `router` saw compress/cache **before** static), set **`FLIGHT_DISABLE_SPA_PIPELINE=1`** until you validate the new behavior. The rate limiter now runs before the router in both stacks.
 2. If your app already shipped **custom SPA / history fallback** middleware in `*.backend.ts`, remove the duplicate once you confirm Flight’s fallback matches your routes (especially non-`/api` prefixes—use **`FLIGHT_SPA_DENY_PREFIXES`**).
 3. Expect **`koa-cash` off** in the SPA pipeline unless you opt in with **`FLIGHT_HTTP_CACHE`**.
 
@@ -445,15 +462,18 @@ Existing Koa files keep working. `export default router.routes()` is mounted thr
 
 In development (`FLIGHT_MODE=development`) the API stays on `FLIGHT_PORT` (default 3000) and Vite is spawned on 3001. In production the built SPA is read from `FLIGHT_DIST_PATH` (default `<app home>/dist`) with an `index.html` fallback. `/api`, `/health`, and `/healthz` do not fall back.
 
-| Variable                 | Default          | Bun runtime                                                                                                                                                                                       |
-| ------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FLIGHT_SESSION_SECRET`  | unset            | Sessions stay **off** until this is set. There is no baked-in secret.                                                                                                                             |
-| `FLIGHT_RATE_LIMIT_MAX`  | `0`              | Rate limit stays **off** until this is greater than zero.                                                                                                                                         |
-| `FLIGHT_TRUST_PROXY`     | false            | When `1` / `true` / `yes`, the limiter uses `X-Forwarded-For`. Otherwise that header is ignored.                                                                                                  |
-| `FLIGHT_REDIS_URL`       | unset            | `redis://host:6379` for shared sessions and cache.                                                                                                                                                |
-| `FLIGHT_CACHE_ENABLED`   | false            | Cache GET responses that send `Cache-Control: max-age`.                                                                                                                                           |
-| `FLIGHT_STATIC_PREFIXES` | `/assets,/fonts` | GET/HEAD under these prefixes skip the rate limit.                                                                                                                                                |
-| `FLIGHT_IDLE_TIMEOUT`    | `10`             | Idle seconds before Bun closes a socket. Explicit `0` disables it. Fractions round up to at least 1. Negative or invalid values use `10`. Above `255` is clamped. SSE turns this off per request. |
+| Variable                             | Default          | Bun runtime                                                                                                                                                                                       |
+| ------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FLIGHT_SESSION_SECRET`              | unset            | Sessions stay **off** until this is set. There is no baked-in secret.                                                                                                                             |
+| `FLIGHT_RATE_LIMIT_MAX`              | `0`              | Rate limit stays **off** until this is greater than zero.                                                                                                                                         |
+| `FLIGHT_TRUST_PROXY`                 | false            | When `1` / `true` / `yes`, the limiter uses `X-Forwarded-For`. Otherwise that header is ignored.                                                                                                  |
+| `FLIGHT_REDIS_URL`                   | unset            | `redis://host:6379` for shared sessions and cache.                                                                                                                                                |
+| `FLIGHT_CACHE_ENABLED`               | false            | Cache GET responses that send `Cache-Control: max-age`.                                                                                                                                           |
+| `FLIGHT_STATIC_PREFIXES`             | `/assets,/fonts` | GET/HEAD under these prefixes skip the rate limit.                                                                                                                                                |
+| `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` | _(empty)_        | Limit only paths under these prefixes. Empty limits every route, including Bun-native and Koa routes. Flight does not assume `/api`.                                                              |
+| `FLIGHT_IDLE_TIMEOUT`                | `10`             | Idle seconds before Bun closes a socket. Explicit `0` disables it. Fractions round up to at least 1. Negative or invalid values use `10`. Above `255` is clamped. SSE turns this off per request. |
+
+The Bun limiter sits in front of every route by default, with the same scope variables as the Node server (`FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES`, `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES`, `FLIGHT_STATIC_PREFIXES`).
 
 Other `FLIGHT_*` knobs from the Node server (`FLIGHT_MODE`, `FLIGHT_PORT`, `FLIGHT_APP_HOME`, `FLIGHT_EXCLUDE_PATHS`, `FLIGHT_SPA_DENY_PREFIXES`, `FLIGHT_PAYLOAD_LIMIT`) apply here too. `FLIGHT_MAX_WORKERS` does not: see the cluster note above. `GET /healthz` returns `ok` and is not rate limited.
 

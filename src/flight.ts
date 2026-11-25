@@ -17,7 +17,6 @@ import koaCash from 'koa-cash'
 import logger from 'koa-logger'
 import os from 'os'
 import path from 'path'
-import ratelimit from 'koa-ratelimit'
 import serve from 'koa-static'
 import session from 'koa-session'
 
@@ -25,6 +24,7 @@ import { backendDiscoveryIgnorePatterns, dedupeStrings, mergeExcludePaths } from
 import {
     applyTrustProxy,
     httpCacheEnabledInSpaPipeline,
+    mountRouter,
     parseCommaPrefixes,
     productionSpaPipelineActive,
     ratelimitWithPrefixSkips,
@@ -236,7 +236,24 @@ if (cluster.isPrimary) {
         }
     })
 
-    app.use(router.routes()).use(router.allowedMethods())
+    const useSpaPipeline = mode === 'production' && productionSpaPipelineActive(mode, Boolean(argv.disable_vite))
+    const staticPrefixes = parseCommaPrefixes(process.env.FLIGHT_STATIC_PREFIXES, '/assets,/fonts')
+    const rateLimitSkipPrefixes = dedupeStrings([
+        ...staticPrefixes,
+        ...parseCommaPrefixes(process.env.FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES, '')
+    ])
+    const rateLimitIncludePrefixes = parseCommaPrefixes(process.env.FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES, '')
+
+    // Mounted before the router so matched routes, not just unmatched 404s, are counted.
+    // The legacy stack keeps its old behavior of counting every request, so it gets no static skip list.
+    const productionRatelimit =
+        mode === 'production'
+            ? ratelimitWithPrefixSkips(redis, useSpaPipeline ? rateLimitSkipPrefixes : [], {
+                  includePrefixes: rateLimitIncludePrefixes
+              })
+            : null
+
+    mountRouter(app, router, productionRatelimit)
 
     if (mode === 'production') {
         console.log('Starting flight in production mode')
@@ -253,28 +270,7 @@ if (cluster.isPrimary) {
         }
 
         const distRoot = resolveDistRoot(process.cwd())
-        const useSpaPipeline = productionSpaPipelineActive(mode, Boolean(argv.disable_vite))
-        const staticPrefixes = parseCommaPrefixes(process.env.FLIGHT_STATIC_PREFIXES, '/assets,/fonts')
-        const rateLimitSkipPrefixes = dedupeStrings([
-            ...staticPrefixes,
-            ...parseCommaPrefixes(process.env.FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES, '')
-        ])
         const spaDenyExtra = parseCommaPrefixes(process.env.FLIGHT_SPA_DENY_PREFIXES, '')
-
-        const productionRatelimit = ratelimit({
-            driver: 'redis',
-            db: redis,
-            duration: 60000,
-            errorMessage: 'Sometimes You Just Have to Slow Down.',
-            id: (ctx) => ctx.get('x-forwarded-for') || ctx.ip,
-            headers: {
-                remaining: 'Rate-Limit-Remaining',
-                reset: 'Rate-Limit-Reset',
-                total: 'Rate-Limit-Total'
-            },
-            max: 1200,
-            disableHeader: false
-        })
 
         const productionKoaCash = koaCash({
             get: (key) => redis.get(key),
@@ -283,18 +279,16 @@ if (cluster.isPrimary) {
 
         if (useSpaPipeline) {
             console.log(
-                'Flight: production SPA pipeline (static + index.html fallback before compress / rate limit); opt out with FLIGHT_DISABLE_SPA_PIPELINE=1'
+                'Flight: production SPA pipeline (static + index.html fallback after the router, before compress); the rate limiter runs before the router; opt out with FLIGHT_DISABLE_SPA_PIPELINE=1'
             )
             app.use(serve(distRoot))
             app.use(spaIndexHtmlFallback(distRoot, spaIndexRelative(), spaDenyExtra))
             app.use(compress())
-            app.use(ratelimitWithPrefixSkips(redis, rateLimitSkipPrefixes))
             if (httpCacheEnabledInSpaPipeline()) {
                 app.use(productionKoaCash)
             }
         } else {
             app.use(compress())
-            app.use(productionRatelimit)
             app.use(productionKoaCash)
             app.use(serve(distRoot))
         }

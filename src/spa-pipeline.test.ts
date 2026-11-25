@@ -12,10 +12,12 @@ import request from 'supertest'
 import {
     applyTrustProxy,
     httpCacheEnabledInSpaPipeline,
+    mountRouter,
     parseCommaPrefixes,
     productionSpaPipelineActive,
     ratelimitWithPrefixSkips,
     resolveDistRoot,
+    shouldRateLimitPath,
     shouldSkipRateLimitForPath,
     spaIndexHtmlFallback,
     spaIndexRelative
@@ -127,6 +129,125 @@ test('ratelimitWithPrefixSkips does not call the limiter for a static GET', asyn
         reached = true
     })
     assert.equal(reached, true)
+})
+
+test('shouldRateLimitPath limits every route by default and honors include and skip prefixes', () => {
+    assert.equal(shouldRateLimitPath('/api/x', 'GET', []), true)
+    assert.equal(shouldRateLimitPath('/orders', 'POST', []), true)
+    assert.equal(shouldRateLimitPath('/', 'GET', []), true)
+
+    assert.equal(shouldRateLimitPath('/orders', 'POST', [], ['/v1']), false)
+    assert.equal(shouldRateLimitPath('/v1/orders', 'POST', [], ['/v1']), true)
+    assert.equal(shouldRateLimitPath('/v1', 'GET', [], ['/v1']), true)
+    assert.equal(shouldRateLimitPath('/v10/orders', 'POST', [], ['/v1']), false)
+    assert.equal(shouldRateLimitPath('/anything', 'GET', [], ['/']), true)
+
+    assert.equal(shouldRateLimitPath('/assets/app.js', 'GET', ['/assets']), false)
+    assert.equal(shouldRateLimitPath('/assets/app.js', 'POST', ['/assets']), true)
+    assert.equal(shouldRateLimitPath('/v1/assets/app.js', 'GET', ['/v1/assets'], ['/v1']), false)
+})
+
+/**
+ * Koa app with the same mount order as the Node runtime: limiter first, then the router.
+ * Routes deliberately do not sit under `/api`, so nothing in the test depends on that prefix.
+ */
+function buildLimitedApp(max: number, includePrefixes: string[] = [], skipPrefixes: string[] = []): Koa {
+    const app = new Koa()
+    const router = new Router()
+    router.get('/api/ping', async (ctx) => {
+        ctx.body = { ok: true }
+    })
+    router.get('/orders', async (ctx) => {
+        ctx.body = { orders: [] }
+    })
+    router.get('/assets/app.js', async (ctx) => {
+        ctx.body = 'asset'
+    })
+    const limiter = ratelimitWithPrefixSkips(new Map(), skipPrefixes, { max, includePrefixes })
+    mountRouter(app, router, limiter)
+    return app
+}
+
+test('matched /api routes are counted and get 429 once the limit is exceeded', async () => {
+    const server = request(buildLimitedApp(2).callback())
+
+    const first = await server.get('/api/ping')
+    assert.equal(first.status, 200)
+    assert.equal(first.headers['rate-limit-total'], '2')
+    assert.equal(first.headers['rate-limit-remaining'], '1')
+
+    const second = await server.get('/api/ping')
+    assert.equal(second.status, 200)
+    assert.equal(second.headers['rate-limit-remaining'], '0')
+
+    const third = await server.get('/api/ping')
+    assert.equal(third.status, 429)
+    assert.equal(third.text, 'Sometimes You Just Have to Slow Down.')
+    assert.ok(third.headers['retry-after'])
+})
+
+test('by default the limiter covers every route, not only /api', async () => {
+    const server = request(buildLimitedApp(2).callback())
+
+    assert.equal((await server.get('/api/ping')).status, 200)
+    assert.equal((await server.get('/orders')).status, 200)
+    assert.equal((await server.get('/orders')).status, 429)
+    assert.equal((await server.get('/api/ping')).status, 429)
+    assert.equal((await server.get('/does-not-exist')).status, 429)
+})
+
+test('a limiter mounted after the router never sees matched routes', async () => {
+    const app = new Koa()
+    const router = new Router()
+    router.get('/api/ping', async (ctx) => {
+        ctx.body = { ok: true }
+    })
+    app.use(router.routes())
+    app.use(ratelimitWithPrefixSkips(new Map(), [], { max: 1 }))
+
+    const server = request(app.callback())
+    for (let i = 0; i < 3; i++) {
+        const res = await server.get('/api/ping')
+        assert.equal(res.status, 200)
+        assert.equal(res.headers['rate-limit-total'], undefined)
+    }
+})
+
+test('includePrefixes scopes the limiter to the listed paths', async () => {
+    const server = request(buildLimitedApp(1, ['/api']).callback())
+
+    assert.equal((await server.get('/api/ping')).status, 200)
+    assert.equal((await server.get('/api/ping')).status, 429)
+
+    for (let i = 0; i < 3; i++) {
+        const res = await server.get('/orders')
+        assert.equal(res.status, 200)
+        assert.equal(res.headers['rate-limit-total'], undefined)
+    }
+})
+
+test('skip prefixes still exempt GET static paths from the limiter', async () => {
+    const server = request(buildLimitedApp(1, [], ['/assets']).callback())
+
+    for (let i = 0; i < 3; i++) {
+        assert.equal((await server.get('/assets/app.js')).status, 200)
+    }
+    assert.equal((await server.get('/api/ping')).status, 200)
+    assert.equal((await server.get('/api/ping')).status, 429)
+})
+
+test('mountRouter without a limiter leaves routes unlimited', async () => {
+    const app = new Koa()
+    const router = new Router()
+    router.get('/api/ping', async (ctx) => {
+        ctx.body = { ok: true }
+    })
+    mountRouter(app, router, null)
+
+    const server = request(app.callback())
+    for (let i = 0; i < 3; i++) {
+        assert.equal((await server.get('/api/ping')).status, 200)
+    }
 })
 
 test('GET hashed asset returns file body, not index.html', async () => {
