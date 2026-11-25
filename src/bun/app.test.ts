@@ -160,6 +160,38 @@ test('rate limit uses the peer address unless the proxy is trusted', async () =>
     expect(fromB.status).toBe(200)
 })
 
+test('the Bun rate limiter counts every route and answers 429 past the limit', async () => {
+    const { url } = await boot({ FLIGHT_RATE_LIMIT_MAX: '3' })
+
+    expect(loadConfig({}).rateLimit.includePrefixes).toEqual([])
+    expect((await fetch(`${url}/api/ping`)).status).toBe(200)
+    expect((await fetch(`${url}/hello`)).status).toBe(200)
+    const counted = await fetch(`${url}/api/from-js`)
+    expect(counted.status).toBe(200)
+    expect(counted.headers.get('x-ratelimit-remaining')).toBe('0')
+
+    for (const path of ['/api/ping', '/hello', '/api/from-js', '/nowhere']) {
+        const limited = await fetch(`${url}${path}`)
+        expect(limited.status).toBe(429)
+    }
+})
+
+test('FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES scopes the Bun limiter', async () => {
+    expect(loadConfig({ FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES: 'api, /v1' }).rateLimit.includePrefixes).toEqual([
+        '/api',
+        '/v1'
+    ])
+
+    const { url } = await boot({ FLIGHT_RATE_LIMIT_MAX: '1', FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES: '/api' })
+    expect((await fetch(`${url}/api/ping`)).status).toBe(200)
+    expect((await fetch(`${url}/api/ping`)).status).toBe(429)
+    for (let i = 0; i < 3; i++) {
+        const open = await fetch(`${url}/hello`)
+        expect(open.status).toBe(200)
+        expect(open.headers.get('x-ratelimit-limit')).toBeNull()
+    }
+})
+
 test('static assets do not consume the API rate limit', async () => {
     const { url } = await boot({ FLIGHT_RATE_LIMIT_MAX: '1' })
     expect((await fetch(`${url}/assets/app.js`)).status).toBe(200)

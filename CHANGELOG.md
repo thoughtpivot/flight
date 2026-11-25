@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.0.2
+
+### Fixed
+
+- **Rate limiter now runs before the router on the Node runtime.** In 3.0.0 and 3.0.1 the production limiter was mounted after the router, so a request that matched a route (every `/api` route included) never reached it. Only unmatched requests were counted. The limiter is now mounted before the router in both the SPA pipeline and the legacy production stack, so every request is counted and gets a `429` once it exceeds the limit (1200 per client per 60 seconds, unchanged).
+
+### Added
+
+- **`FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES`** (Node and Bun). Comma-separated path prefixes. The default is empty, which limits **every route**. Flight does not assume `/api`. When set, only paths equal to or under a listed prefix are limited. `FLIGHT_STATIC_PREFIXES` and `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` still exempt `GET`/`HEAD` under those prefixes.
+
+### Notes
+
+- `flight-bun` already ran its limiter in front of every route, so the ordering bug did not affect it. It gets the same `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` option for parity.
+- Upgrade note: apps on the Node runtime that served more than 1200 requests per minute per client on matched routes were never limited before and now will be. The limit itself is not configurable, so scope the limiter with `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES` if some routes should stay unlimited. Static files and SPA pages outside `FLIGHT_STATIC_PREFIXES` (for example `/favicon.ico` or a deep link) now count too. Add a prefix to `FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES` to exempt `GET`/`HEAD` under it, or limit only your API paths with `FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES`.
+
 ## 3.0.1
 
 ### Fixed

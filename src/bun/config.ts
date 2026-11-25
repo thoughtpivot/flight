@@ -30,6 +30,8 @@ export interface RateLimitConfig {
     durationMs: number
     trustProxy: boolean
     skipPrefixes: string[]
+    /** Limit only paths under these prefixes. Empty or unset limits every route. */
+    includePrefixes?: string[]
 }
 
 /** Signed-cookie sessions. Disabled until a secret is set. */
@@ -166,7 +168,8 @@ export function loadConfig(env: Env = process.env): Config {
             skipPrefixes: [
                 ...prefixes(env.FLIGHT_STATIC_PREFIXES, '/assets,/fonts'),
                 ...prefixes(env.FLIGHT_RATE_LIMIT_EXCLUDE_PREFIXES, '')
-            ]
+            ],
+            includePrefixes: prefixes(env.FLIGHT_RATE_LIMIT_INCLUDE_PREFIXES, '')
         },
         session: {
             enabled: sessionSecret.length > 0,
